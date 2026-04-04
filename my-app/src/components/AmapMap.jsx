@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
+import { SearchBox } from './SearchBox'
 
 /**
  * 高德地图接入（基础）：底图 + 比例尺 + 定位控件。
@@ -12,9 +13,6 @@ const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 /** 默认中心 [lng, lat]，GCJ-02 */
 const DEFAULT_CENTER = [116.397428, 39.90923]
 
-/** 梧桐山坐标 [lng, lat]，GCJ-02 */
-const WUTONG_SHAN = [114.1502, 22.5758]
-
 export function AmapMap({
   zoom = 11,
   center = DEFAULT_CENTER,
@@ -24,6 +22,56 @@ export function AmapMap({
 }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
+
+  // 搜索和定位相关的状态
+  const searchMarkerRef = useRef(null)
+
+  // 处理搜索完成回调：添加标记并移动地图
+  const handleSearchComplete = (poi) => {
+    if (!mapRef.current || !poi) return
+
+    // 移除之前的搜索标记
+    if (searchMarkerRef.current) {
+      mapRef.current.remove(searchMarkerRef.current)
+      searchMarkerRef.current = null
+    }
+
+    // 创建新的搜索标记
+    searchMarkerRef.current = new AMap.Marker({
+      position: poi.location,
+      title: poi.name,
+      animation: 'AMAP_ANIMATION_DROP',
+      map: mapRef.current,
+      label: {
+        content: poi.name,
+        direction: 'top',
+      }
+    })
+
+    // 添加信息窗口
+    const infoWindow = new AMap.InfoWindow({
+      content: `
+        <div style="padding: 10px; font-size: 14px;">
+          <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
+          <div style="color: #666;">${poi.address || '地址未知'}</div>
+          <div style="color: #999; font-size: 12px; margin-top: 5px;">
+            类型: ${poi.type || '未知'}
+          </div>
+        </div>
+      `,
+      offset: new AMap.Pixel(0, -30),
+      closeWhenClickMap: true,
+    })
+
+    // 点击标记显示信息窗口
+    searchMarkerRef.current.on('click', () => {
+      infoWindow.open(mapRef.current, poi.location)
+    })
+
+    // 将地图中心移动到搜索结果
+    mapRef.current.setCenter(poi.location)
+    mapRef.current.setZoom(16)
+  }
 
   useEffect(() => {
     if (!KEY) return
@@ -37,7 +85,7 @@ export function AmapMap({
     AMapLoader.load({
       key: KEY,
       version: '2.0',
-      plugins: ['AMap.Scale', 'AMap.Geolocation', 'AMap.Marker'],
+      plugins: ['AMap.Scale', 'AMap.Geolocation'],
     })
       .then((AMap) => {
         if (cancelled || !containerRef.current) return
@@ -48,25 +96,6 @@ export function AmapMap({
           viewMode: '2D',
         })
         mapRef.current.addControl(new AMap.Scale())
-
-        // 添加梧桐山标记
-        const wutongMarker = new AMap.Marker({
-          position: WUTONG_SHAN,
-          title: '梧桐山',
-          animation: 'AMAP_ANIMATION_DROP',
-        })
-        mapRef.current.add(wutongMarker)
-
-        // 添加信息窗口
-        const infoWindow = new AMap.InfoWindow({
-          content: '<div style="padding: 10px;">梧桐山风景区</div>',
-          offset: new AMap.Pixel(0, -30),
-          closeWhenClickMap: true,
-        })
-
-        wutongMarker.on('click', () => {
-          infoWindow.open(mapRef.current, WUTONG_SHAN)
-        })
 
         AMap.plugin('AMap.Geolocation', () => {
           if (cancelled || !mapRef.current) return
@@ -104,6 +133,11 @@ export function AmapMap({
     return () => {
       cancelled = true
       if (mapRef.current) {
+        // 移除搜索标记
+        if (searchMarkerRef.current) {
+          mapRef.current.remove(searchMarkerRef.current)
+          searchMarkerRef.current = null
+        }
         mapRef.current.destroy()
         mapRef.current = null
       }
@@ -128,5 +162,10 @@ export function AmapMap({
     )
   }
 
-  return <div ref={containerRef} className={`amap-map ${className ?? ''}`} role="application" aria-label="地图" />
+  return (
+    <div className={`amap-map-container ${className ?? ''}`} role="application" aria-label="地图">
+      <SearchBox onSearchComplete={handleSearchComplete} />
+      <div ref={containerRef} className="amap-map" />
+    </div>
+  )
 }
