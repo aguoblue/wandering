@@ -1,10 +1,15 @@
 import { useEffect, useRef } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
 
+/**
+ * 高德地图接入（基础）：底图 + 比例尺 + 定位控件。
+ * 地图为命令式 API，用 ref 挂 DOM，在 useEffect 里创建/销毁实例。
+ */
+
 const KEY = import.meta.env.VITE_AMAP_KEY
 const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 
-/** 默认：北京天安门附近 */
+/** 默认中心 [lng, lat]，GCJ-02 */
 const DEFAULT_CENTER = [116.397428, 39.90923]
 
 export function AmapMap({
@@ -12,13 +17,14 @@ export function AmapMap({
   center = DEFAULT_CENTER,
   className,
   showLocateButton = true,
-  autoLocate = true,
+  autoLocate = false,
 }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
 
   useEffect(() => {
     if (!KEY) return
+
     if (SECURITY_CODE) {
       window._AMapSecurityConfig = { securityJsCode: SECURITY_CODE }
     }
@@ -32,6 +38,7 @@ export function AmapMap({
     })
       .then((AMap) => {
         if (cancelled || !containerRef.current) return
+
         mapRef.current = new AMap.Map(containerRef.current, {
           zoom,
           center,
