@@ -1,0 +1,41 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.app-map-section {
+  width: 100%;
+  max-width: 960px;
+}
+
+.app-map-section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.amap-map {
+  width: 100%;
+  height: 360px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.amap-map--placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 1rem 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+.amap-map--placeholder code {
+  font-size: 0.8125rem;
+}

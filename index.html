@@ -12,6 +12,15 @@
                 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
                 sans-serif;
         }
+
+        .app p {
+            display: flex;
+        }
+
+        .app button {
+            color: rgba(153, 20, 20, 1);
+            background-color: rgba(96, 62, 62, 1);
+        }
     </style>
 </head>
 <body>
@@ -23,8 +32,40 @@
     <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script type="text/babel">
+        const { useState } = React;
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<h1>Hello React! 👋</h1>);
+
+        function Header({ title }) {
+            return <h1>{title}</h1>;
+        }
+
+        function FruitList({ items }) {
+            return (
+                <ul>
+                    {items.map((fruit) => (
+                        <li key={fruit}>{fruit}</li>
+                    ))}
+                </ul>
+            );
+        }
+
+        function App() {
+            const [count, setCount] = useState(0);
+            const fruits = ['apple', 'banana', 'cherry'];
+
+            return (
+                <div className="app">
+                    <Header title="Hello React! 👋" />
+                    <p>点击次数：{count}</p>
+                    <button type="button" onClick={() => setCount((c) => c + 1)}>
+                        点我 +1
+                    </button>
+                    <FruitList items={fruits} />
+                </div>
+            );
+        }
+
+        root.render(<App />);
     </script>
 </body>
 </html>
