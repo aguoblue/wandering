@@ -12,6 +12,9 @@ const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 /** 默认中心 [lng, lat]，GCJ-02 */
 const DEFAULT_CENTER = [116.397428, 39.90923]
 
+/** 梧桐山坐标 [lng, lat]，GCJ-02 */
+const WUTONG_SHAN = [114.1502, 22.5758]
+
 export function AmapMap({
   zoom = 11,
   center = DEFAULT_CENTER,
@@ -34,7 +37,7 @@ export function AmapMap({
     AMapLoader.load({
       key: KEY,
       version: '2.0',
-      plugins: ['AMap.Scale', 'AMap.Geolocation'],
+      plugins: ['AMap.Scale', 'AMap.Geolocation', 'AMap.Marker'],
     })
       .then((AMap) => {
         if (cancelled || !containerRef.current) return
@@ -45,6 +48,25 @@ export function AmapMap({
           viewMode: '2D',
         })
         mapRef.current.addControl(new AMap.Scale())
+
+        // 添加梧桐山标记
+        const wutongMarker = new AMap.Marker({
+          position: WUTONG_SHAN,
+          title: '梧桐山',
+          animation: 'AMAP_ANIMATION_DROP',
+        })
+        mapRef.current.add(wutongMarker)
+
+        // 添加信息窗口
+        const infoWindow = new AMap.InfoWindow({
+          content: '<div style="padding: 10px;">梧桐山风景区</div>',
+          offset: new AMap.Pixel(0, -30),
+          closeWhenClickMap: true,
+        })
+
+        wutongMarker.on('click', () => {
+          infoWindow.open(mapRef.current, WUTONG_SHAN)
+        })
 
         AMap.plugin('AMap.Geolocation', () => {
           if (cancelled || !mapRef.current) return
