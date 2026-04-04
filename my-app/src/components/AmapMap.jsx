@@ -17,7 +17,7 @@ export function AmapMap({
   center = DEFAULT_CENTER,
   className,
   showLocateButton = true,
-  autoLocate = false,
+  autoLocate = true,
 }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
