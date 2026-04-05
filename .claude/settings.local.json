@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(tasklist)"
     ]
   }
 }
