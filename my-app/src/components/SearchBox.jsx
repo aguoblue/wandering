@@ -3,15 +3,25 @@ import AMapLoader from '@amap/amap-jsapi-loader'
 
 /**
  * 搜索框组件：集成高德地图 AutoComplete 功能
+ * 支持搜索后选择交通方式规划路线
  */
 
 const KEY = import.meta.env.VITE_AMAP_KEY
 const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 
-export function SearchBox({ onSearchComplete }) {
+const TRAVEL_MODES = [
+  { key: 'driving', label: '驾车' },
+  { key: 'walking', label: '步行' },
+  { key: 'riding', label: '骑行' },
+  { key: 'transit', label: '地铁' },
+]
+
+export function SearchBox({ onSearchComplete, onTravelModeChange }) {
   const inputRef = useRef(null)
   const autoCompleteRef = useRef(null)
   const [ready, setReady] = useState(false)
+  const [showTravelMode, setShowTravelMode] = useState(false)
+  const [selectedMode, setSelectedMode] = useState('')
 
   useEffect(() => {
     if (!KEY || !inputRef.current) return
@@ -59,8 +69,8 @@ export function SearchBox({ onSearchComplete }) {
               if (status === 'complete' && result?.poiList?.pois?.length > 0) {
                 const firstPoi = result.poiList.pois[0]
                 console.log('PlaceSearch 搜索结果:', firstPoi)
-                // 合并 AutoComplete 的信息和 PlaceSearch 的坐标
-                onSearchComplete({
+                // 合并 AutoComplete 的信息和 PlaceSearch 的坐标，然后调用 handleSearchComplete
+                handleSearchComplete({
                   ...poi,
                   location: firstPoi.location,
                   address: firstPoi.address,
@@ -71,7 +81,8 @@ export function SearchBox({ onSearchComplete }) {
               }
             })
           } else {
-            onSearchComplete(poi)
+            // 有坐标，直接调用 handleSearchComplete
+            handleSearchComplete(poi)
           }
           console.log('================')
         })
@@ -89,6 +100,20 @@ export function SearchBox({ onSearchComplete }) {
     }
   }, [onSearchComplete])
 
+  const handleSearchComplete = (poi) => {
+    setShowTravelMode(true)
+    setSelectedMode('')
+    onSearchComplete(poi)
+  }
+
+  const handleTravelModeChange = (e) => {
+    const mode = e.target.value
+    setSelectedMode(mode)
+    if (onTravelModeChange && mode) {
+      onTravelModeChange(mode)
+    }
+  }
+
   return (
     <div className="search-box">
       <input
@@ -98,6 +123,20 @@ export function SearchBox({ onSearchComplete }) {
         className="search-input"
         disabled={!ready}
       />
+      {showTravelMode && (
+        <select
+          className="travel-mode-select"
+          value={selectedMode}
+          onChange={handleTravelModeChange}
+        >
+          <option value="" disabled className="placeholder-option">路线</option>
+          {TRAVEL_MODES.map((mode) => (
+            <option key={mode.key} value={mode.key}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   )
 }

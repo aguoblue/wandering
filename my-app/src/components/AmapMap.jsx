@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import { SearchBox } from './SearchBox'
 
@@ -23,12 +23,23 @@ export function AmapMap({
   const containerRef = useRef(null)
   const mapRef = useRef(null)
 
-  // 搜索和定位相关的状态
+  // 搜索相关的状态
   const searchMarkerRef = useRef(null)
+  const [searchEndPoint, setSearchEndPoint] = useState(null) // 搜索选择的终点
+  const [currentTravelMode, setCurrentTravelMode] = useState(null) // 当前选择的交通方式
 
-  // 处理搜索完成回调：添加标记并移动地图
+  // 路线相关的状态
+  const routeRef = useRef(null) // 路线实例（Driving/Walking/Riding/Transit）
+  const routeMarkersRef = useRef([]) // 路线起点终点标记
+
+  // 处理搜索完成回调：添加标记
   const handleSearchComplete = (poi) => {
     if (!mapRef.current || !poi) return
+
+    // 清除之前的路线
+    clearRoute()
+    setSearchEndPoint(poi)
+    setCurrentTravelMode(null)
 
     // 移除之前的搜索标记
     if (searchMarkerRef.current) {
@@ -71,6 +82,226 @@ export function AmapMap({
     // 将地图中心移动到搜索结果
     mapRef.current.setCenter(poi.location)
     mapRef.current.setZoom(16)
+  }
+
+  // 清除之前的路线和标记
+  const clearRoute = () => {
+    if (routeRef.current) {
+      routeRef.current.clear()
+      routeRef.current = null
+    }
+    routeMarkersRef.current.forEach(marker => {
+      if (mapRef.current) mapRef.current.remove(marker)
+    })
+    routeMarkersRef.current = []
+  }
+
+  // 处理交通方式选择，开始规划路线
+  const handleTravelModeChange = async (travelMode) => {
+    if (!mapRef.current || !searchEndPoint?.location) return
+
+    // 如果切换了交通方式，先清除之前的路线
+    if (currentTravelMode !== travelMode) {
+      clearRoute()
+      setCurrentTravelMode(travelMode)
+    }
+
+    // 获取当前位置作为起点
+    let startPoint
+    try {
+      const currentPosition = await getCurrentPosition()
+      startPoint = {
+        location: currentPosition,
+        name: '当前位置',
+      }
+    } catch (err) {
+      console.error('获取当前位置失败', err)
+      alert('无法获取当前位置')
+      return
+    }
+
+    if (!startPoint?.location) {
+      alert('无法获取起点位置')
+      return
+    }
+
+    // 根据交通方式选择相应的插件
+    const pluginMap = {
+      driving: 'AMap.Driving',
+      walking: 'AMap.Walking',
+      riding: 'AMap.Riding',
+      transit: 'AMap.Transfer',
+    }
+
+    const modeLabelMap = {
+      driving: '驾车',
+      walking: '步行',
+      riding: '骑行',
+      transit: '地铁',
+    }
+
+    const plugin = pluginMap[travelMode]
+    const modeLabel = modeLabelMap[travelMode]
+    if (!plugin) {
+      console.error('不支持的交通方式:', travelMode)
+      return
+    }
+
+    // 加载路线规划插件
+    AMapLoader.load({
+      key: KEY,
+      version: '2.0',
+      plugins: [plugin, 'AMap.Geocoder'],
+    })
+      .then((AMap) => {
+        if (!mapRef.current) return
+
+        let route
+
+        // 公交规划需要获取城市
+        const handleTransitSearch = () => {
+          const geocoder = new AMap.Geocoder()
+          geocoder.getAddress(searchEndPoint.location, (status, result) => {
+            if (status === 'complete' && result?.regeocode?.addressComponent?.city) {
+              const city = result.regeocode.addressComponent.city
+              route = new AMap.Transfer({
+                map: mapRef.current,
+                city: city,
+              })
+              route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+                if (status === 'complete') {
+                  console.log(`=== ${modeLabel}路线规划成功 ===`)
+                  console.log('起点:', startPoint)
+                  console.log('终点:', searchEndPoint)
+                  console.log('方案数:', result.plans?.length)
+                  if (result.plans?.length > 0) {
+                    const firstPlan = result.plans[0]
+                    console.log('首选方案:')
+                    console.log('  总距离:', firstPlan.distance, '米')
+                    console.log('  总时间:', firstPlan.time, '秒')
+                    console.log('  票价:', firstPlan.cost, '元')
+                    console.log('  换乘次数:', firstPlan.transfers)
+                  }
+                  console.log('完整结果:', result)
+                  console.log('========================')
+                } else {
+                  console.error(`${modeLabel}路线规划失败`, result)
+                }
+              })
+            } else {
+              console.error('获取城市信息失败', result)
+            }
+          })
+        }
+
+        switch (travelMode) {
+          case 'driving':
+            route = new AMap.Driving({
+              map: mapRef.current,
+              panel: null,
+            })
+            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+              if (status === 'complete') {
+                console.log(`=== ${modeLabel}路线规划成功 ===`)
+                console.log('起点:', startPoint)
+                console.log('终点:', searchEndPoint)
+                console.log('总距离:', result.routes?.[0]?.distance, '米')
+                console.log('总时间:', result.routes?.[0]?.time, '秒')
+                console.log('完整结果:', result)
+                console.log('========================')
+              } else {
+                console.error(`${modeLabel}路线规划失败`, result)
+              }
+            })
+            break
+          case 'walking':
+            route = new AMap.Walking({
+              map: mapRef.current,
+            })
+            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+              if (status === 'complete') {
+                console.log(`=== ${modeLabel}路线规划成功 ===`)
+                console.log('起点:', startPoint)
+                console.log('终点:', searchEndPoint)
+                console.log('总距离:', result.routes?.[0]?.distance, '米')
+                console.log('总时间:', result.routes?.[0]?.time, '秒')
+                console.log('完整结果:', result)
+                console.log('========================')
+              } else {
+                console.error(`${modeLabel}路线规划失败`, result)
+              }
+            })
+            break
+          case 'riding':
+            route = new AMap.Riding({
+              map: mapRef.current,
+            })
+            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+              if (status === 'complete') {
+                console.log(`=== ${modeLabel}路线规划成功 ===`)
+                console.log('起点:', startPoint)
+                console.log('终点:', searchEndPoint)
+                console.log('总距离:', result.routes?.[0]?.distance, '米')
+                console.log('总时间:', result.routes?.[0]?.time, '秒')
+                console.log('完整结果:', result)
+                console.log('========================')
+              } else {
+                console.error(`${modeLabel}路线规划失败`, result)
+              }
+            })
+            break
+          case 'transit':
+            handleTransitSearch()
+            return // 提前返回，因为 handleTransitSearch 会设置 route
+        }
+
+        routeRef.current = route
+
+        // 添加起点标记
+        const startMarker = new AMap.Marker({
+          position: startPoint.location,
+          icon: `https://webapi.amap.com/theme/v1.3/markers/n/start.png`,
+          map: mapRef.current,
+          title: startPoint.name || '起点',
+        })
+        routeMarkersRef.current.push(startMarker)
+
+        // 添加终点标记
+        const endMarker = new AMap.Marker({
+          position: searchEndPoint.location,
+          icon: `https://webapi.amap.com/theme/v1.3/markers/n/end.png`,
+          map: mapRef.current,
+          title: searchEndPoint.name || '终点',
+        })
+        routeMarkersRef.current.push(endMarker)
+      })
+      .catch((err) => {
+        console.error('路线插件加载失败', err)
+      })
+  }
+
+  // 获取当前位置
+  const getCurrentPosition = () => {
+    return new Promise((resolve, reject) => {
+      if (!window.AMap) {
+        reject(new Error('AMap 未加载'))
+        return
+      }
+
+      window.AMap.plugin('AMap.Geolocation', () => {
+        const geolocation = new window.AMap.Geolocation({
+          enableHighAccuracy: true,
+          timeout: 10000,
+        })
+        geolocation.getCurrentPosition((status, result) => {
+          if (status === 'complete' && result?.position) {
+            resolve(result.position)
+          } else {
+            reject(new Error('定位失败'))
+          }
+        })
+      })
+    })
   }
 
   useEffect(() => {
@@ -138,6 +369,8 @@ export function AmapMap({
           mapRef.current.remove(searchMarkerRef.current)
           searchMarkerRef.current = null
         }
+        // 清除路线
+        clearRoute()
         mapRef.current.destroy()
         mapRef.current = null
       }
@@ -164,7 +397,7 @@ export function AmapMap({
 
   return (
     <div className={`amap-map-container ${className ?? ''}`} role="application" aria-label="地图">
-      <SearchBox onSearchComplete={handleSearchComplete} />
+      <SearchBox onSearchComplete={handleSearchComplete} onTravelModeChange={handleTravelModeChange} />
       <div ref={containerRef} className="amap-map" />
     </div>
   )
