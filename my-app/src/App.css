@@ -6,9 +6,16 @@
   width: 100%;
 }
 
-.app-map-section {
+.app-content {
+  display: flex;
+  gap: 1rem;
   width: 100%;
-  max-width: 960px;
+  align-items: flex-start;
+}
+
+.app-map-section {
+  flex: 1;
+  min-width: 0;
 }
 
 .app-map-section h2 {
@@ -19,10 +26,11 @@
 
 .amap-map {
   width: 100%;
-  height: 360px;
+  height: 600px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  min-width: 100%;
 }
 
 .amap-map--placeholder {
@@ -44,7 +52,8 @@
 .amap-map-container {
   position: relative;
   width: 100%;
-  height: 360px;
+  height: 600px;
+  min-width: 100%;
 }
 
 .search-box {

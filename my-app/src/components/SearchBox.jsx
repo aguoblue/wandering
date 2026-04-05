@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
 
 /**
@@ -16,16 +16,44 @@ const TRAVEL_MODES = [
   { key: 'transit', label: '地铁' },
 ]
 
-export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate, showTravelMode: externalShowTravelMode, selectedTravelMode: externalSelectedTravelMode, onTravelModeSelect }) {
+export function SearchBox({ onSearchComplete, onTravelModeChange, showTravelMode: externalShowTravelMode, selectedTravelMode: externalSelectedTravelMode, onTravelModeSelect }) {
   const inputRef = useRef(null)
   const autoCompleteRef = useRef(null)
   const [ready, setReady] = useState(false)
   const [showTravelMode, setShowTravelMode] = useState(false)
   const [selectedMode, setSelectedMode] = useState('')
 
-  // 使用外部控制的状态
   const effectiveShowTravelMode = externalShowTravelMode !== undefined ? externalShowTravelMode : showTravelMode
   const effectiveSelectedMode = externalSelectedTravelMode !== undefined ? externalSelectedTravelMode : selectedMode
+
+  const handleSearchComplete = useCallback((poi) => {
+    setShowTravelMode(true)
+    setSelectedMode('')
+    onSearchComplete(poi)
+  }, [onSearchComplete])
+
+  const updateInputValue = useCallback((value, isFromMap = false) => {
+    if (inputRef.current) {
+      inputRef.current.value = value
+      if (isFromMap) {
+        setTimeout(() => {
+          if (inputRef.current) {
+            const event = new Event('input', { bubbles: true })
+            inputRef.current.dispatchEvent(event)
+          }
+        }, 300)
+      } else {
+        const event = new Event('input', { bubbles: true })
+        inputRef.current.dispatchEvent(event)
+      }
+    }
+  }, [])
+
+  const updateInputValueFromMap = useCallback((value) => {
+    if (inputRef.current) {
+      inputRef.current.value = value
+    }
+  }, [])
 
   useEffect(() => {
     if (!KEY || !inputRef.current) return
@@ -37,7 +65,6 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate,
     let cancelled = false
     let placeSearch = null
 
-    // 加载 AMap API 和相关插件
     AMapLoader.load({
       key: KEY,
       version: '2.0',
@@ -46,21 +73,16 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate,
       .then((AMap) => {
         if (cancelled || !inputRef.current) return
 
-        // 初始化 PlaceSearch，用于获取地点详情和坐标
         placeSearch = new AMap.PlaceSearch({
           city: '全国',
           pageSize: 1,
         })
-
-        // 添加一个标志，用于区分是否是点击地图触发的更新
-        let isMapClickUpdate = false
 
         autoCompleteRef.current = new AMap.AutoComplete({
           input: inputRef.current,
           city: '全国',
         })
 
-        // 监听选择事件
         autoCompleteRef.current.on('select', (e) => {
           const poi = e.poi
 
@@ -69,36 +91,24 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate,
           console.log('e.poi:', poi)
           console.log('e.poi.location:', poi?.location)
 
-          // 如果 AutoComplete 没有返回坐标，用 PlaceSearch 搜索
           if (!poi.location) {
             console.log('AutoComplete 没有返回坐标，使用 PlaceSearch 搜索')
             placeSearch.search(poi.name, (status, result) => {
               if (status === 'complete' && result?.poiList?.pois?.length > 0) {
                 const firstPoi = result.poiList.pois[0]
                 console.log('PlaceSearch 搜索结果:', firstPoi)
-                // 合并 AutoComplete 的信息和 PlaceSearch 的坐标，然后调用 handleSearchComplete
-                const finalPoi = {
+                handleSearchComplete({
                   ...poi,
                   location: firstPoi.location,
                   address: firstPoi.address,
                   type: firstPoi.type,
-                }
-                handleSearchComplete(finalPoi)
-                // 更新输入框值
-                if (onValueUpdate) {
-                  onValueUpdate(finalPoi.name)
-                }
+                })
               } else {
                 console.warn('PlaceSearch 搜索失败:', status, result)
               }
             })
           } else {
-            // 有坐标，直接调用 handleSearchComplete
             handleSearchComplete(poi)
-            // 更新输入框值
-            if (onValueUpdate) {
-              onValueUpdate(poi.name)
-            }
           }
           console.log('================')
         })
@@ -114,35 +124,8 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate,
       autoCompleteRef.current = null
       placeSearch = null
     }
-  }, [onSearchComplete])
+  }, [handleSearchComplete])
 
-  const handleSearchComplete = (poi) => {
-    setShowTravelMode(true)
-    setSelectedMode('')
-    onSearchComplete(poi)
-  }
-
-  // 更新搜索框的值
-  const updateInputValue = (value, isFromMap = false) => {
-    if (inputRef.current) {
-      inputRef.current.value = value
-      // 如果是来自地图点击，延迟触发input事件，避免立即触发搜索
-      if (isFromMap) {
-        setTimeout(() => {
-          if (inputRef.current) {
-            const event = new Event('input', { bubbles: true })
-            inputRef.current.dispatchEvent(event)
-          }
-        }, 300) // 延迟300ms，给用户时间观察
-      } else {
-        // 正常更新立即触发
-        const event = new Event('input', { bubbles: true })
-        inputRef.current.dispatchEvent(event)
-      }
-    }
-  }
-
-  // 监听全局更新事件
   useEffect(() => {
     const handleUpdate = (value) => {
       updateInputValue(value)
@@ -152,35 +135,26 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, onValueUpdate,
     return () => {
       delete window.updateSearchBoxInput
     }
-  }, [])
+  }, [updateInputValue])
 
-  // 新增：专门用于地图点击的更新方法
-  const updateInputValueFromMap = (value) => {
-    // 直接设置值，不触发 input 事件，避免弹出建议列表
-    if (inputRef.current) {
-      inputRef.current.value = value
-    }
-  }
-
-  // 暴露地图更新方法到全局
   useEffect(() => {
     window.updateSearchBoxInputFromMap = updateInputValueFromMap
     return () => {
       delete window.updateSearchBoxInputFromMap
     }
-  }, [])
+  }, [updateInputValueFromMap])
 
   const handleTravelModeChange = (e) => {
     const mode = e.target.value
     console.log('=== SearchBox handleTravelModeChange ===')
     console.log('选择的值:', mode)
 
-    // 更新外部状态
     if (onTravelModeSelect) {
       onTravelModeSelect(mode)
     } else {
       setSelectedMode(mode)
     }
+
     if (onTravelModeChange && mode) {
       console.log('调用 onTravelModeChange:', mode)
       onTravelModeChange(mode)

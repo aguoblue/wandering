@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import { SearchBox } from './SearchBox'
 
@@ -13,180 +13,56 @@ const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 /** 默认中心 [lng, lat]，GCJ-02 */
 const DEFAULT_CENTER = [116.397428, 39.90923]
 
-export function AmapMap({
+const normalizeLocation = (location) => {
+  if (!location) return null
+
+  if (Array.isArray(location) && location.length >= 2) {
+    return {
+      lng: Number(location[0]),
+      lat: Number(location[1])
+    }
+  }
+
+  if (typeof location.getLng === 'function' && typeof location.getLat === 'function') {
+    return {
+      lng: Number(location.getLng()),
+      lat: Number(location.getLat())
+    }
+  }
+
+  if ('lng' in location && 'lat' in location) {
+    return {
+      lng: Number(location.lng),
+      lat: Number(location.lat)
+    }
+  }
+
+  return null
+}
+
+const toAMapPosition = (location) => {
+  const normalizedLocation = normalizeLocation(location)
+  return normalizedLocation ? [normalizedLocation.lng, normalizedLocation.lat] : null
+}
+
+export const AmapMap = forwardRef(function AmapMap({
   zoom = 11,
   center = DEFAULT_CENTER,
   className,
   showLocateButton = true,
   autoLocate = true,
-}) {
+  onLocationSelect,
+}, ref) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
-
-  // 搜索相关的状态
   const searchMarkerRef = useRef(null)
-  const [searchEndPoint, setSearchEndPoint] = useState(null) // 搜索选择的终点
-  const [currentTravelMode, setCurrentTravelMode] = useState(null) // 当前选择的交通方式
-  const [searchBoxValue, setSearchBoxValue] = useState('') // 搜索框的值
-  const [showTravelMode, setShowTravelMode] = useState(false) // 控制路线选择框显示
-  const [selectedTravelMode, setSelectedTravelMode] = useState('') // 选中的交通方式
+  const routeRef = useRef(null)
 
-  // 更新搜索框值的方法
-  const updateSearchBoxValue = (value) => {
-    setSearchBoxValue(value)
-    // 通过全局方法更新 SearchBox 组件
-    if (window.updateSearchBoxInput) {
-      window.updateSearchBoxInput(value)
-    }
-  }
+  const [searchEndPoint, setSearchEndPoint] = useState(null)
+  const [showTravelMode, setShowTravelMode] = useState(false)
+  const [selectedTravelMode, setSelectedTravelMode] = useState('')
 
-  // 路线相关的状态
-  const routeRef = useRef(null) // 路线实例（Driving/Walking/Riding/Transit）
-  // 注意：不再需要 routeMarkersRef，因为插件会自动管理标记
-
-  // 处理点击地图事件：设置终点
-  const handleMapClick = (e) => {
-    if (!mapRef.current) return
-
-    const clickPosition = e.lnglat
-
-    // 使用逆地理编码获取点击位置的地址信息
-    window.AMap.plugin('AMap.Geocoder', () => {
-      const geocoder = new window.AMap.Geocoder({
-        radius: 100, // 搜索半径
-        extensions: 'all'
-      })
-
-      geocoder.getAddress(clickPosition, (status, result) => {
-        if (status === 'complete' && result?.regeocode) {
-          const addressInfo = result.regeocode
-          const poi = {
-            location: clickPosition,
-            name: addressInfo.formattedAddress || '点击位置',
-            address: addressInfo.formattedAddress,
-            type: '手动选择'
-          }
-
-          // 清除之前的搜索结果和路线
-          clearRoute()
-          setSearchEndPoint(poi)
-          setCurrentTravelMode(null)
-          setShowTravelMode(true) // 显示路线选择框
-          setSelectedTravelMode('') // 重置选中的交通方式
-
-          // 移除之前的搜索标记
-          if (searchMarkerRef.current) {
-            mapRef.current.remove(searchMarkerRef.current)
-            searchMarkerRef.current = null
-          }
-
-          // 创建新的搜索标记
-          searchMarkerRef.current = new window.AMap.Marker({
-            position: clickPosition,
-            title: poi.name,
-            animation: 'AMAP_ANIMATION_DROP',
-            map: mapRef.current,
-            label: {
-              content: poi.name,
-              direction: 'top',
-            }
-          })
-
-          // 添加信息窗口
-          const infoWindow = new window.AMap.InfoWindow({
-            content: `
-              <div style="padding: 10px; font-size: 14px;">
-                <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
-                <div style="color: #666;">${poi.address || '地址未知'}</div>
-                <div style="color: #999; font-size: 12px; margin-top: 5px;">
-                  类型: ${poi.type || '未知'}
-                </div>
-              </div>
-            `,
-            offset: new window.AMap.Pixel(0, -30),
-            closeWhenClickMap: true,
-          })
-
-          // 点击标记显示信息窗口
-          searchMarkerRef.current.on('click', () => {
-            infoWindow.open(mapRef.current, clickPosition)
-          })
-
-          // 将地图中心移动到点击位置
-          mapRef.current.setCenter(clickPosition)
-          mapRef.current.setZoom(16)
-
-          // 更新搜索框的值
-          setSearchBoxValue(poi.name)
-
-          // 通过 window 对象更新搜索框，使用地图专用方法
-          if (window.updateSearchBoxInputFromMap) {
-            window.updateSearchBoxInputFromMap(poi.name)
-          }
-        } else {
-          console.error('逆地理编码失败', result)
-        }
-      })
-    })
-  }
-
-  // 处理搜索完成回调：添加标记
-  const handleSearchComplete = (poi) => {
-    if (!mapRef.current || !poi) return
-
-    // 清除之前的路线
-    clearRoute()
-    setSearchEndPoint(poi)
-    setCurrentTravelMode(null)
-    setShowTravelMode(true) // 显示路线选择框
-    setSelectedTravelMode('') // 重置选中的交通方式
-
-    // 移除之前的搜索标记
-    if (searchMarkerRef.current) {
-      mapRef.current.remove(searchMarkerRef.current)
-      searchMarkerRef.current = null
-    }
-
-    // 创建新的搜索标记
-    searchMarkerRef.current = new AMap.Marker({
-      position: poi.location,
-      title: poi.name,
-      animation: 'AMAP_ANIMATION_DROP',
-      map: mapRef.current,
-      label: {
-        content: poi.name,
-        direction: 'top',
-      }
-    })
-
-    // 添加信息窗口
-    const infoWindow = new AMap.InfoWindow({
-      content: `
-        <div style="padding: 10px; font-size: 14px;">
-          <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
-          <div style="color: #666;">${poi.address || '地址未知'}</div>
-          <div style="color: #999; font-size: 12px; margin-top: 5px;">
-            类型: ${poi.type || '未知'}
-          </div>
-        </div>
-      `,
-      offset: new AMap.Pixel(0, -30),
-      closeWhenClickMap: true,
-    })
-
-    // 点击标记显示信息窗口
-    searchMarkerRef.current.on('click', () => {
-      infoWindow.open(mapRef.current, poi.location)
-    })
-
-    // 将地图中心移动到搜索结果
-    mapRef.current.setCenter(poi.location)
-    mapRef.current.setZoom(16)
-  }
-
-  // 清除之前的路线和标记
-  const clearRoute = () => {
-    // 清除搜索标记
+  const clearRoute = useCallback(() => {
     if (searchMarkerRef.current) {
       if (mapRef.current) {
         try {
@@ -198,7 +74,6 @@ export function AmapMap({
       searchMarkerRef.current = null
     }
 
-    // 清除路线实例（插件会自动清除相关的标记和路线）
     if (routeRef.current) {
       try {
         routeRef.current.clear()
@@ -207,9 +82,131 @@ export function AmapMap({
       }
       routeRef.current = null
     }
-  }
+  }, [])
 
-  // 处理交通方式选择，开始规划路线
+  const centerOnLocation = useCallback((location) => {
+    const position = toAMapPosition(location)
+
+    if (mapRef.current && position) {
+      mapRef.current.setCenter(position)
+      mapRef.current.setZoom(16)
+    }
+  }, [])
+
+  const displayLocation = useCallback((poi) => {
+    const normalizedLocation = normalizeLocation(poi?.location)
+    const position = toAMapPosition(poi?.location)
+
+    if (!mapRef.current || !normalizedLocation || !position || !window.AMap) return
+
+    clearRoute()
+    setSearchEndPoint({
+      ...poi,
+      location: normalizedLocation
+    })
+    setShowTravelMode(true)
+    setSelectedTravelMode('')
+
+    searchMarkerRef.current = new window.AMap.Marker({
+      position,
+      title: poi.name,
+      animation: 'AMAP_ANIMATION_DROP',
+      map: mapRef.current,
+      label: {
+        content: poi.name,
+        direction: 'top',
+      }
+    })
+
+    const infoWindow = new window.AMap.InfoWindow({
+      content: `
+        <div style="padding: 10px; font-size: 14px;">
+          <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
+          <div style="color: #666;">${poi.address || '地址未知'}</div>
+          <div style="color: #999; font-size: 12px; margin-top: 5px;">
+            类型: ${poi.type || '未知'}
+          </div>
+        </div>
+      `,
+      offset: new window.AMap.Pixel(0, -30),
+      closeWhenClickMap: true,
+    })
+
+    searchMarkerRef.current.on('click', () => {
+      infoWindow.open(mapRef.current, position)
+    })
+
+    centerOnLocation(normalizedLocation)
+
+    if (window.updateSearchBoxInputFromMap) {
+      window.updateSearchBoxInputFromMap(poi.name)
+    }
+  }, [centerOnLocation, clearRoute])
+
+  const showLocation = useCallback((locationData) => {
+    const normalizedLocation = normalizeLocation(locationData?.location)
+    if (!normalizedLocation) return
+
+    displayLocation({
+      name: locationData.name || locationData.address || '收藏地点',
+      address: locationData.address || '地址未知',
+      location: normalizedLocation,
+      type: locationData.type || '收藏地点'
+    })
+  }, [displayLocation])
+
+  useImperativeHandle(ref, () => ({
+    centerOnLocation,
+    showLocation
+  }), [centerOnLocation, showLocation])
+
+  const handleMapClick = useCallback((e) => {
+    const clickPosition = e.lnglat
+    if (!clickPosition || !window.AMap) return
+
+    window.AMap.plugin('AMap.Geocoder', () => {
+      const geocoder = new window.AMap.Geocoder({
+        radius: 100,
+        extensions: 'all'
+      })
+
+      geocoder.getAddress(clickPosition, (status, result) => {
+        if (status === 'complete' && result?.regeocode) {
+          const addressInfo = result.regeocode
+          const locationData = {
+            name: addressInfo.formattedAddress || '点击位置',
+            address: addressInfo.formattedAddress,
+            location: normalizeLocation(clickPosition)
+          }
+
+          onLocationSelect?.(locationData)
+          displayLocation({
+            ...locationData,
+            type: '手动选择'
+          })
+        } else {
+          console.error('逆地理编码失败', result)
+        }
+      })
+    })
+  }, [displayLocation, onLocationSelect])
+
+  const handleSearchComplete = useCallback((poi) => {
+    const normalizedLocation = normalizeLocation(poi?.location)
+    if (!normalizedLocation) return
+
+    onLocationSelect?.({
+      name: poi.name,
+      address: poi.address,
+      location: normalizedLocation
+    })
+
+    displayLocation({
+      ...poi,
+      location: normalizedLocation
+    })
+  }, [displayLocation, onLocationSelect])
+
   const handleTravelModeChange = async (travelMode) => {
     console.log('=== handleTravelModeChange 被调用 ===')
     console.log('交通方式:', travelMode)
@@ -220,11 +217,8 @@ export function AmapMap({
       return
     }
 
-    // 总是清除之前的路线，确保干净的状态
     clearRoute()
-    setCurrentTravelMode(travelMode)
 
-    // 获取当前位置作为起点
     let startPoint
     try {
       const currentPosition = await getCurrentPosition()
@@ -243,7 +237,6 @@ export function AmapMap({
       return
     }
 
-    // 根据交通方式选择相应的插件
     const pluginMap = {
       driving: 'AMap.Driving',
       walking: 'AMap.Walking',
@@ -265,7 +258,6 @@ export function AmapMap({
       return
     }
 
-    // 加载路线规划插件
     AMapLoader.load({
       key: KEY,
       version: '2.0',
@@ -276,7 +268,6 @@ export function AmapMap({
 
         let route
 
-        // 公交规划需要获取城市
         const handleTransitSearch = () => {
           const geocoder = new AMap.Geocoder()
           geocoder.getAddress(searchEndPoint.location, (status, result) => {
@@ -284,26 +275,27 @@ export function AmapMap({
               const city = result.regeocode.addressComponent.city
               route = new AMap.Transfer({
                 map: mapRef.current,
-                city: city,
+                city,
               })
-              route.search(startPoint.location, searchEndPoint.location, (status, result) => {
-                if (status === 'complete') {
+              routeRef.current = route
+              route.search(startPoint.location, searchEndPoint.location, (transitStatus, transitResult) => {
+                if (transitStatus === 'complete') {
                   console.log(`=== ${modeLabel}路线规划成功 ===`)
                   console.log('起点:', startPoint)
                   console.log('终点:', searchEndPoint)
-                  console.log('方案数:', result.plans?.length)
-                  if (result.plans?.length > 0) {
-                    const firstPlan = result.plans[0]
+                  console.log('方案数:', transitResult.plans?.length)
+                  if (transitResult.plans?.length > 0) {
+                    const firstPlan = transitResult.plans[0]
                     console.log('首选方案:')
                     console.log('  总距离:', firstPlan.distance, '米')
                     console.log('  总时间:', firstPlan.time, '秒')
                     console.log('  票价:', firstPlan.cost, '元')
                     console.log('  换乘次数:', firstPlan.transfers)
                   }
-                  console.log('完整结果:', result)
+                  console.log('完整结果:', transitResult)
                   console.log('========================')
                 } else {
-                  console.error(`${modeLabel}路线规划失败`, result)
+                  console.error(`${modeLabel}路线规划失败`, transitResult)
                 }
               })
             } else {
@@ -370,19 +362,16 @@ export function AmapMap({
             break
           case 'transit':
             handleTransitSearch()
-            return // 提前返回，因为 handleTransitSearch 会设置 route
+            return
         }
 
         routeRef.current = route
-
-        // 注意：高德地图路线规划插件会自动添加起点和终点标记，无需手动添加
       })
       .catch((err) => {
         console.error('路线插件加载失败', err)
       })
   }
 
-  // 获取当前位置
   const getCurrentPosition = () => {
     return new Promise((resolve, reject) => {
       if (!window.AMap) {
@@ -429,8 +418,6 @@ export function AmapMap({
           viewMode: '2D',
         })
         mapRef.current.addControl(new AMap.Scale())
-
-        // 添加点击地图事件
         mapRef.current.on('click', handleMapClick)
 
         AMap.plugin('AMap.Geolocation', () => {
@@ -469,18 +456,13 @@ export function AmapMap({
     return () => {
       cancelled = true
       if (mapRef.current) {
-        // 移除搜索标记
-        if (searchMarkerRef.current) {
-          mapRef.current.remove(searchMarkerRef.current)
-          searchMarkerRef.current = null
-        }
-        // 清除路线
+        mapRef.current.off('click', handleMapClick)
         clearRoute()
         mapRef.current.destroy()
         mapRef.current = null
       }
     }
-  }, [zoom, center[0], center[1], showLocateButton, autoLocate])
+  }, [autoLocate, center, clearRoute, handleMapClick, showLocateButton, zoom])
 
   if (!KEY) {
     return (
@@ -502,8 +484,14 @@ export function AmapMap({
 
   return (
     <div className={`amap-map-container ${className ?? ''}`} role="application" aria-label="地图">
-      <SearchBox onSearchComplete={handleSearchComplete} onTravelModeChange={handleTravelModeChange} onValueUpdate={setSearchBoxValue} showTravelMode={showTravelMode} selectedTravelMode={selectedTravelMode} onTravelModeSelect={setSelectedTravelMode} />
+      <SearchBox
+        onSearchComplete={handleSearchComplete}
+        onTravelModeChange={handleTravelModeChange}
+        showTravelMode={showTravelMode}
+        selectedTravelMode={selectedTravelMode}
+        onTravelModeSelect={setSelectedTravelMode}
+      />
       <div ref={containerRef} className="amap-map" />
     </div>
   )
-}
+})

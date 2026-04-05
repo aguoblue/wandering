@@ -124,3 +124,25 @@
    - 地图自动调整视野到点击位置（缩放到 16 级）
    - 添加带动画的标记点，显示位置名称
    - 点击标记显示详细信息窗口
+
+# 20260405 收藏夹链路修复
+
+1. **修复收藏添加流程**：
+   - `App.jsx` 新增 `selectedLocation` 状态，接收地图点击或搜索得到的位置
+   - `Favorites.jsx` 接收 `selectedLocation`，在添加表单中直接展示当前选中的经纬度和地址
+   - 添加收藏表单增加提示文案，明确“打开表单后可在地图上点击或搜索选择位置”
+2. **修复收藏定位流程**：
+   - `AmapMap.jsx` 改为通过 `ref` 暴露 `showLocation` 和 `centerOnLocation`
+   - 从收藏夹点击“定位”时，直接在地图上展示该收藏点并移动视角，不再依赖未注册的全局方法
+3. **顺手清理实现问题**：
+   - `Favorites.jsx` 改为使用 `useState` 初始化函数读取 `localStorage`，避免 effect 内同步 `setState`
+   - `AmapMap.jsx` 抽出统一的位置展示逻辑，修复未定义 `AMap` 的引用
+   - `SearchBox.jsx` 调整回调定义顺序，移除无用变量，使 `npm run lint` 可通过
+4. **修复点击后不定位的问题**：
+   - 统一地图点击、搜索结果、收藏夹、`localStorage` 中的坐标格式为普通 `{ lng, lat }`
+   - 调用高德地图 `setCenter`、`Marker`、`InfoWindow` 时统一转换为 `[lng, lat]`
+   - 避免 `AMap.LngLat` 与普通对象混用导致点击收藏后地图不跳转
+5. **修复点击后地图重建的问题**：
+   - `App.jsx` 中将传给 `AmapMap` 的回调用 `useCallback` 固定引用
+   - 避免点击地图后 `selectedLocation` 更新触发 `AmapMap` 初始化 effect 重新执行
+   - 防止地图回到 `DEFAULT_CENTER` 后再次自动定位
