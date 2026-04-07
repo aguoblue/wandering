@@ -146,3 +146,8 @@
    - `App.jsx` 中将传给 `AmapMap` 的回调用 `useCallback` 固定引用
    - 避免点击地图后 `selectedLocation` 更新触发 `AmapMap` 初始化 effect 重新执行
    - 防止地图回到 `DEFAULT_CENTER` 后再次自动定位
+
+# 20260407 路线规划 NO_PARAMS 修复
+
+1. **原因**：`searchEndPoint.location` 存的是普通对象 `{ lng, lat }`，`AMap.Driving` / `Walking` / `Riding` / `Transfer` 的 `search` 需要 **`AMap.LngLat`**（或文档认可的格式），直接传普通对象会返回 **`NO_PARAMS`**。
+2. **修改**：`AmapMap.jsx` 增加 `toAMapLngLat(AMap, location)`，在 `handleTravelModeChange` 的插件回调里将起点、终点转为 `new AMap.LngLat(lng, lat)` 再调用 `route.search`；公交逆地理 `getAddress` 也改为使用转换后的终点。

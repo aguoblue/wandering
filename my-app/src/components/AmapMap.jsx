@@ -7,6 +7,23 @@ import { SearchBox } from './SearchBox'
  * 地图为命令式 API，用 ref 挂 DOM，在 useEffect 里创建/销毁实例。
  */
 
+
+/**
+ * 1.渲染地图
+ * 2.点击地图触发回调函数 handleMapClick
+ * 3.点击搜索框触发回调函数 handleSearchComplete
+ * 4.点击交通方式选择触发回调函数 handleTravelModeChange
+ * 5.点击位置信息触发回调函数 displayLocation
+ * 6.点击当前位置触发回调函数 centerOnLocation
+ * 7.点击收藏地点触发回调函数 showLocation
+ * 8.点击手动选择触发回调函数 handleMapClick
+ * 9.点击路线规划触发回调函数 handleTravelModeChange
+ * 10.点击路线规划触发回调函数 handleTravelModeChange
+ * 
+ * 点击地图任意位置
+ * 搜索框
+ */
+
 const KEY = import.meta.env.VITE_AMAP_KEY
 const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 
@@ -43,6 +60,13 @@ const normalizeLocation = (location) => {
 const toAMapPosition = (location) => {
   const normalizedLocation = normalizeLocation(location)
   return normalizedLocation ? [normalizedLocation.lng, normalizedLocation.lat] : null
+}
+
+/** 驾车/步行/骑行 route.search 需要 AMap.LngLat；直接传 { lng, lat } 会得到 NO_PARAMS */
+const toAMapLngLat = (AMap, location) => {
+  const normalized = normalizeLocation(location)
+  if (!normalized || !AMap?.LngLat) return null
+  return new AMap.LngLat(normalized.lng, normalized.lat)
 }
 
 export const AmapMap = forwardRef(function AmapMap({
@@ -98,13 +122,16 @@ export const AmapMap = forwardRef(function AmapMap({
     const position = toAMapPosition(poi?.location)
 
     if (!mapRef.current || !normalizedLocation || !position || !window.AMap) return
-
+    // 清除路线
     clearRoute()
+    // 设置终点
     setSearchEndPoint({
       ...poi,
       location: normalizedLocation
     })
+    // 显示交通方式选择
     setShowTravelMode(true)
+    // 清空交通方式选择
     setSelectedTravelMode('')
 
     searchMarkerRef.current = new window.AMap.Marker({
@@ -161,9 +188,10 @@ export const AmapMap = forwardRef(function AmapMap({
   }), [centerOnLocation, showLocation])
 
   const handleMapClick = useCallback((e) => {
+    // 经纬度坐标
     const clickPosition = e.lnglat
     if (!clickPosition || !window.AMap) return
-
+    // 插件 逆地理编码 将经纬度坐标转换为地址信息
     window.AMap.plugin('AMap.Geocoder', () => {
       const geocoder = new window.AMap.Geocoder({
         radius: 100,
@@ -178,8 +206,9 @@ export const AmapMap = forwardRef(function AmapMap({
             address: addressInfo.formattedAddress,
             location: normalizeLocation(clickPosition)
           }
-
+          // 父组件回调函数 设置终点
           onLocationSelect?.(locationData)
+          // 显示位置信息
           displayLocation({
             ...locationData,
             type: '手动选择'
@@ -266,11 +295,18 @@ export const AmapMap = forwardRef(function AmapMap({
       .then((AMap) => {
         if (!mapRef.current) return
 
+        const startLngLat = toAMapLngLat(AMap, startPoint.location)
+        const endLngLat = toAMapLngLat(AMap, searchEndPoint.location)
+        if (!startLngLat || !endLngLat) {
+          console.error('路线规划：起点或终点坐标无效', { startPoint, searchEndPoint })
+          return
+        }
+
         let route
 
         const handleTransitSearch = () => {
           const geocoder = new AMap.Geocoder()
-          geocoder.getAddress(searchEndPoint.location, (status, result) => {
+          geocoder.getAddress(endLngLat, (status, result) => {
             if (status === 'complete' && result?.regeocode?.addressComponent?.city) {
               const city = result.regeocode.addressComponent.city
               route = new AMap.Transfer({
@@ -278,7 +314,7 @@ export const AmapMap = forwardRef(function AmapMap({
                 city,
               })
               routeRef.current = route
-              route.search(startPoint.location, searchEndPoint.location, (transitStatus, transitResult) => {
+              route.search(startLngLat, endLngLat, (transitStatus, transitResult) => {
                 if (transitStatus === 'complete') {
                   console.log(`=== ${modeLabel}路线规划成功 ===`)
                   console.log('起点:', startPoint)
@@ -310,7 +346,7 @@ export const AmapMap = forwardRef(function AmapMap({
               map: mapRef.current,
               panel: null,
             })
-            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+            route.search(startLngLat, endLngLat, (status, result) => {
               if (status === 'complete') {
                 console.log(`=== ${modeLabel}路线规划成功 ===`)
                 console.log('起点:', startPoint)
@@ -328,7 +364,7 @@ export const AmapMap = forwardRef(function AmapMap({
             route = new AMap.Walking({
               map: mapRef.current,
             })
-            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+            route.search(startLngLat, endLngLat, (status, result) => {
               if (status === 'complete') {
                 console.log(`=== ${modeLabel}路线规划成功 ===`)
                 console.log('起点:', startPoint)
@@ -346,7 +382,7 @@ export const AmapMap = forwardRef(function AmapMap({
             route = new AMap.Riding({
               map: mapRef.current,
             })
-            route.search(startPoint.location, searchEndPoint.location, (status, result) => {
+            route.search(startLngLat, endLngLat, (status, result) => {
               if (status === 'complete') {
                 console.log(`=== ${modeLabel}路线规划成功 ===`)
                 console.log('起点:', startPoint)
@@ -418,6 +454,7 @@ export const AmapMap = forwardRef(function AmapMap({
           viewMode: '2D',
         })
         mapRef.current.addControl(new AMap.Scale())
+        // 点击地图触发回调函数handleMapClick
         mapRef.current.on('click', handleMapClick)
 
         AMap.plugin('AMap.Geolocation', () => {
