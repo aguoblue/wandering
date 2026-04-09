@@ -166,3 +166,4 @@
 2. **完善脚本**：在 `figma/package.json` 中补充 `dev`、`build`、`preview`，使其成为标准 Vite 前端项目。
 3. **依赖调整**：将 `react`、`react-dom` 改为项目真实依赖，并使用 `npm install --legacy-peer-deps` 完成安装，绕过 Figma 导出依赖集合中的 peer 冲突。
 4. **验证结果**：`cd figma && npm run build` 已成功，当前可作为独立前端原型运行和打包。
+5. **仓库说明**：新增根目录 `README.md`，补充 `my-app/` 与 `figma/` 的安装、启动和构建方式。
