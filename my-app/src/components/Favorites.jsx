@@ -58,6 +58,17 @@ const normalizeFavorite = (favorite) => {
   }
 }
 
+/** 列表展示名：优先备注，否则用地图解析的名称，再退回地址 */
+const deriveFavoriteTitle = (remark, selectedLocation, address) => {
+  const r = remark?.trim()
+  if (r) return r
+  const fromMap = selectedLocation?.name?.trim()
+  if (fromMap) return fromMap
+  const addr = address?.trim()
+  if (addr) return addr
+  return '收藏地点'
+}
+
 const loadFavorites = () => {
   try {
     const savedFavorites = localStorage.getItem(FAVORITES_STORAGE_KEY)
@@ -83,7 +94,7 @@ export function Favorites({ onSelectLocation, selectedLocation }) {
   const [favorites, setFavorites] = useState(loadFavorites)
   const [showAddForm, setShowAddForm] = useState(false)
   const [newFavorite, setNewFavorite] = useState({
-    name: '',
+    remark: '',
     address: '',
     location: null
   })
@@ -105,23 +116,24 @@ export function Favorites({ onSelectLocation, selectedLocation }) {
 
   const effectiveAddress = newFavorite.address || selectedLocation?.address || ''
   const effectiveLocation = normalizeLocation(selectedLocation?.location) || normalizeLocation(newFavorite.location)
+  const resolvedTitle = deriveFavoriteTitle(newFavorite.remark, selectedLocation, effectiveAddress)
 
   const handleAddFavorite = () => {
-    if (!newFavorite.name || !effectiveLocation) {
-      alert('请填写名称和位置')
+    if (!effectiveLocation) {
+      alert('请先选择位置')
       return
     }
 
     const favorite = {
       id: Date.now().toString(),
-      name: newFavorite.name,
+      name: resolvedTitle,
       address: effectiveAddress || '地址未知',
       location: effectiveLocation,
       createdAt: new Date().toISOString()
     }
 
     setFavorites((prev) => [...prev, favorite])
-    setNewFavorite({ name: '', address: '', location: null })
+    setNewFavorite({ remark: '', address: '', location: null })
     setShowAddForm(false)
   }
 
@@ -156,13 +168,16 @@ export function Favorites({ onSelectLocation, selectedLocation }) {
         <div className="add-favorite-form">
           <h4>添加新收藏</h4>
           <div className="form-group">
-            <label>名称 *</label>
+            <label>备注（选填）</label>
             <input
               type="text"
-              value={newFavorite.name}
-              onChange={(e) => setNewFavorite({ ...newFavorite, name: e.target.value })}
-              placeholder="例如：公司、家、餐厅"
+              value={newFavorite.remark}
+              onChange={(e) => setNewFavorite({ ...newFavorite, remark: e.target.value })}
+              placeholder="留空则使用地图地点名称"
             />
+            <small className="field-help">
+              展示名称：{resolvedTitle}
+            </small>
           </div>
           <div className="form-group">
             <label>地址</label>

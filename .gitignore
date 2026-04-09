@@ -1,1 +1,10 @@
 .cursor/
+
+# figma app: keep source, ignore local deps/build output
+figma/node_modules/
+figma/dist/
+figma/.DS_Store
+figma/*.log
+figma/.env
+figma/.env.local
+figma/.env.*.local

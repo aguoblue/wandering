@@ -151,3 +151,18 @@
 
 1. **原因**：`searchEndPoint.location` 存的是普通对象 `{ lng, lat }`，`AMap.Driving` / `Walking` / `Riding` / `Transfer` 的 `search` 需要 **`AMap.LngLat`**（或文档认可的格式），直接传普通对象会返回 **`NO_PARAMS`**。
 2. **修改**：`AmapMap.jsx` 增加 `toAMapLngLat(AMap, location)`，在 `handleTravelModeChange` 的插件回调里将起点、终点转为 `new AMap.LngLat(lng, lat)` 再调用 `route.search`；公交逆地理 `getAddress` 也改为使用转换后的终点。
+
+# 20260407 删除未使用的 RoutePanel
+
+1. 删除 `my-app/src/components/RoutePanel.jsx`、`RoutePanel.css`（无任何引用，历史版本中已从主流程移除）。
+
+# 20260407 收藏备注与默认展示名
+
+1. **`Favorites.jsx`**：添加收藏时「名称」改为选填「备注」；保存时的列表标题为 `trim(备注) || 地图选中点的 name || 地址`，仅要求已选位置；表单下方显示即将保存的「展示名称」预览。
+
+# 20260409 figma 原型补齐可运行工程
+
+1. **补齐运行入口**：为 `figma/` 新增 `index.html` 和 `src/main.tsx`，挂载 React 应用并引入全局样式。
+2. **完善脚本**：在 `figma/package.json` 中补充 `dev`、`build`、`preview`，使其成为标准 Vite 前端项目。
+3. **依赖调整**：将 `react`、`react-dom` 改为项目真实依赖，并使用 `npm install --legacy-peer-deps` 完成安装，绕过 Figma 导出依赖集合中的 peer 冲突。
+4. **验证结果**：`cd figma && npm run build` 已成功，当前可作为独立前端原型运行和打包。
