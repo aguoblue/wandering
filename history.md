@@ -167,3 +167,21 @@
 3. **依赖调整**：将 `react`、`react-dom` 改为项目真实依赖，并使用 `npm install --legacy-peer-deps` 完成安装，绕过 Figma 导出依赖集合中的 peer 冲突。
 4. **验证结果**：`cd figma && npm run build` 已成功，当前可作为独立前端原型运行和打包。
 5. **仓库说明**：新增根目录 `README.md`，补充 `my-app/` 与 `figma/` 的安装、启动和构建方式。
+
+# 20260411 figma 地图切换为高德
+
+1. **地图渲染方式替换**：`figma/src/app/components/MapView.tsx` 从 OpenStreetMap `iframe` 改为高德 JS API 动态地图，支持真实地图交互。
+2. **点位与路线展示**：基于活动坐标渲染彩色编号 Marker，并使用 `AMap.Polyline` 连线形成当天/全程路线。
+3. **数据格式适配**：将原数据中的 `[lat, lng]` 转换为高德需要的 `[lng, lat]`，保证点位和路径位置正确。
+4. **错误兜底提示**：新增地图加载态与失败态，缺少 `VITE_AMAP_KEY` 或加载异常时给出明确提示。
+5. **依赖补充**：`figma/package.json` 新增 `@amap/amap-jsapi-loader` 依赖。
+
+# 20260411 figma routes.tsx JSX 作用域
+
+1. **`figma/src/app/routes.tsx`**：在文件顶部增加 `import React from "react"`，消除「JSX 需要 React 在作用域内」的 TypeScript/ESLint 报错（经典 JSX 运行时假定）。
+
+# 20260411 figma React 类型定义
+
+1. **`figma/package.json`**：在 `devDependencies` 中增加 `@types/react`、`@types/react-dom`（与 `react` 19 对齐），解决 `react/jsx-runtime` 无声明文件、隐式 `any` 的 TypeScript 报错。
+2. **安装**：使用 `npm install --legacy-peer-deps` 完成安装（与现有 peer 依赖策略一致）。
+3. **验证**：`npm run build` 与 `tsc --noEmit`（通过 `npx -p typescript@5.8.3 tsc`）通过。

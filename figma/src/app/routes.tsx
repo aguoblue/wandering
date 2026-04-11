@@ -1,3 +1,4 @@
+import React from "react";
 import { createBrowserRouter } from "react-router";
 import { PlansListPage } from "./pages/PlansListPage";
 import { PlanDetailPage } from "./pages/PlanDetailPage";
