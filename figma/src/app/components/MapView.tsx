@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AMapLoader from '@amap/amap-jsapi-loader';
 import { Activity } from '../data/mockPlans';
-import { AlertCircle, MapPin, Navigation } from 'lucide-react';
+import { AlertCircle, ArrowRight, Clock3, MapPin, Navigation, Route, X } from 'lucide-react';
 
 interface MapViewProps {
   activities: Activity[];
@@ -9,7 +9,7 @@ interface MapViewProps {
 }
 
 type MarkerFocusState = 'normal' | 'active' | 'related' | 'dimmed';
-type SegmentFocusState = 'normal' | 'related' | 'dimmed';
+type SegmentFocusState = 'normal' | 'active' | 'related' | 'hovered' | 'dimmed';
 
 interface RouteSegment {
   polyline: any;
@@ -48,17 +48,51 @@ const getPeriodBgColor = (period: string) => {
   }
 };
 
-const getMarkerFocusState = (index: number, selectedIndex: number | null): MarkerFocusState => {
-  if (selectedIndex === null) return 'normal';
-  if (index === selectedIndex) return 'active';
-  if (Math.abs(index - selectedIndex) === 1) return 'related';
-  return 'dimmed';
+const getMarkerFocusState = (
+  index: number,
+  selectedIndex: number | null,
+  selectedSegmentStart: number | null,
+  hoveredSegmentStart: number | null
+): MarkerFocusState => {
+  if (selectedIndex !== null) {
+    if (index === selectedIndex) return 'active';
+    if (Math.abs(index - selectedIndex) === 1) return 'related';
+    return 'dimmed';
+  }
+
+  const segmentStart = selectedSegmentStart ?? hoveredSegmentStart;
+  if (segmentStart !== null) {
+    const isEndpoint = index === segmentStart || index === segmentStart + 1;
+    if (!isEndpoint) return 'dimmed';
+    if (selectedSegmentStart !== null) return 'active';
+    return 'related';
+  }
+
+  return 'normal';
 };
 
-const getSegmentFocusState = (start: number, selectedIndex: number | null): SegmentFocusState => {
-  if (selectedIndex === null) return 'normal';
-  if (start === selectedIndex || start === selectedIndex - 1) return 'related';
-  return 'dimmed';
+const getSegmentFocusState = (
+  start: number,
+  selectedIndex: number | null,
+  selectedSegmentStart: number | null,
+  hoveredSegmentStart: number | null
+): SegmentFocusState => {
+  if (selectedSegmentStart !== null) {
+    if (start === selectedSegmentStart) return 'active';
+    return 'dimmed';
+  }
+
+  if (selectedIndex !== null) {
+    if (start === selectedIndex || start === selectedIndex - 1) return 'related';
+    return 'dimmed';
+  }
+
+  if (hoveredSegmentStart !== null) {
+    if (start === hoveredSegmentStart) return 'hovered';
+    return 'normal';
+  }
+
+  return 'normal';
 };
 
 const getMarkerContent = (index: number, markerColor: string, state: MarkerFocusState) => {
@@ -87,7 +121,7 @@ const getMarkerContent = (index: number, markerColor: string, state: MarkerFocus
     dimmed: {
       border: '2px solid #fff',
       boxShadow: '0 1px 8px rgba(0,0,0,.12)',
-      opacity: 0.3,
+      opacity: 0.28,
       scale: 0.94,
       filter: 'grayscale(0.32)'
     }
@@ -97,12 +131,33 @@ const getMarkerContent = (index: number, markerColor: string, state: MarkerFocus
 };
 
 const getSegmentStyle = (state: SegmentFocusState) => {
+  if (state === 'active') {
+    return {
+      strokeColor: '#1d4ed8',
+      strokeWeight: 9,
+      strokeOpacity: 1,
+      zIndex: 90,
+      showDir: true
+    };
+  }
+
   if (state === 'related') {
     return {
       strokeColor: '#2563eb',
       strokeWeight: 7,
-      strokeOpacity: 1,
-      zIndex: 75
+      strokeOpacity: 0.95,
+      zIndex: 75,
+      showDir: false
+    };
+  }
+
+  if (state === 'hovered') {
+    return {
+      strokeColor: '#3b82f6',
+      strokeWeight: 7,
+      strokeOpacity: 0.95,
+      zIndex: 80,
+      showDir: true
     };
   }
 
@@ -111,7 +166,8 @@ const getSegmentStyle = (state: SegmentFocusState) => {
       strokeColor: '#94a3b8',
       strokeWeight: 4,
       strokeOpacity: 0.22,
-      zIndex: 50
+      zIndex: 50,
+      showDir: false
     };
   }
 
@@ -119,7 +175,8 @@ const getSegmentStyle = (state: SegmentFocusState) => {
     strokeColor: '#2563eb',
     strokeWeight: 5,
     strokeOpacity: 0.85,
-    zIndex: 60
+    zIndex: 60,
+    showDir: false
   };
 };
 
@@ -138,6 +195,8 @@ export function MapView({ activities, planName }: MapViewProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [selectedSegmentStart, setSelectedSegmentStart] = useState<number | null>(null);
+  const [hoveredSegmentStart, setHoveredSegmentStart] = useState<number | null>(null);
 
   const amapKey = import.meta.env.VITE_AMAP_KEY;
   const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE;
@@ -146,6 +205,22 @@ export function MapView({ activities, planName }: MapViewProps) {
     () => activities.map((activity) => [activity.coordinates[1], activity.coordinates[0]] as [number, number]),
     [activities]
   );
+
+  const selectedSegmentDetails = useMemo(() => {
+    if (selectedSegmentStart === null) return null;
+
+    const from = activities[selectedSegmentStart];
+    const to = activities[selectedSegmentStart + 1];
+
+    if (!from || !to) return null;
+
+    return {
+      from,
+      to,
+      fromIndex: selectedSegmentStart,
+      toIndex: selectedSegmentStart + 1
+    };
+  }, [activities, selectedSegmentStart]);
 
   const openActivityInfo = (index: number) => {
     const activity = activities[index];
@@ -159,12 +234,33 @@ export function MapView({ activities, planName }: MapViewProps) {
   };
 
   const handleSelectActivity = (index: number) => {
+    setSelectedSegmentStart(null);
+    setHoveredSegmentStart(null);
     setSelectedIndex(index);
     openActivityInfo(index);
   };
 
+  const handleCloseSegmentPanel = () => {
+    setSelectedSegmentStart(null);
+  };
+
+  const handleNavigateSegment = (direction: 'prev' | 'next') => {
+    if (selectedSegmentStart === null) return;
+
+    if (direction === 'prev' && selectedSegmentStart > 0) {
+      setSelectedSegmentStart(selectedSegmentStart - 1);
+      return;
+    }
+
+    if (direction === 'next' && selectedSegmentStart < activities.length - 2) {
+      setSelectedSegmentStart(selectedSegmentStart + 1);
+    }
+  };
+
   useEffect(() => {
     setSelectedIndex(null);
+    setSelectedSegmentStart(null);
+    setHoveredSegmentStart(null);
   }, [activities]);
 
   useEffect(() => {
@@ -172,17 +268,17 @@ export function MapView({ activities, planName }: MapViewProps) {
       const activity = activities[index];
       if (!marker || !activity) return;
 
-      const markerState = getMarkerFocusState(index, selectedIndex);
+      const markerState = getMarkerFocusState(index, selectedIndex, selectedSegmentStart, hoveredSegmentStart);
       marker.setContent(getMarkerContent(index, getPeriodColor(activity.period), markerState));
       marker.setzIndex(markerState === 'active' ? 140 : markerState === 'related' ? 120 : 100);
     });
 
     segmentRefs.current.forEach(({ polyline, start }) => {
       if (!polyline) return;
-      const segmentState = getSegmentFocusState(start, selectedIndex);
+      const segmentState = getSegmentFocusState(start, selectedIndex, selectedSegmentStart, hoveredSegmentStart);
       polyline.setOptions(getSegmentStyle(segmentState));
     });
-  }, [activities, selectedIndex]);
+  }, [activities, hoveredSegmentStart, selectedIndex, selectedSegmentStart]);
 
   useEffect(() => {
     if (!containerRef.current || activities.length === 0) return;
@@ -244,6 +340,8 @@ export function MapView({ activities, planName }: MapViewProps) {
               ignoreNextMapClickRef.current = false;
             }, 180);
 
+            setSelectedSegmentStart(null);
+            setHoveredSegmentStart(null);
             setSelectedIndex(index);
             infoWindow.setContent(getInfoWindowContent(activity));
             infoWindow.open(map, points[index]);
@@ -262,6 +360,26 @@ export function MapView({ activities, planName }: MapViewProps) {
             ...getSegmentStyle('normal')
           });
 
+          polyline.on('mouseover', () => {
+            setHoveredSegmentStart(i);
+          });
+
+          polyline.on('mouseout', () => {
+            setHoveredSegmentStart((prev) => (prev === i ? null : prev));
+          });
+
+          polyline.on('click', () => {
+            ignoreNextMapClickRef.current = true;
+            window.setTimeout(() => {
+              ignoreNextMapClickRef.current = false;
+            }, 180);
+
+            setSelectedIndex(null);
+            setSelectedSegmentStart(i);
+            setHoveredSegmentStart(null);
+            infoWindow.close();
+          });
+
           segments.push({ polyline, start: i, end: i + 1 });
         }
 
@@ -275,6 +393,8 @@ export function MapView({ activities, planName }: MapViewProps) {
           }
 
           setSelectedIndex(null);
+          setSelectedSegmentStart(null);
+          setHoveredSegmentStart(null);
           infoWindow.close();
         });
 
@@ -345,13 +465,97 @@ export function MapView({ activities, planName }: MapViewProps) {
         )}
 
         {!loadError && (
-          <div className="absolute top-3 left-3 pointer-events-none">
-            <div className="flex items-center gap-2 mb-3">
-              <MapPin className="size-5 text-blue-600" />
-              <h3 className="font-semibold">高德路线预览</h3>
+          <>
+            <div className="absolute top-3 left-3 pointer-events-none">
+              <div className="flex items-center gap-2 mb-3">
+                <MapPin className="size-5 text-blue-600" />
+                <h3 className="font-semibold">高德路线预览</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">点击点位看活动，点击线路看路段详情，点击空白重置</p>
             </div>
-            <p className="text-sm text-muted-foreground">点击标记聚焦关联点位，点击地图空白可重置</p>
-          </div>
+
+            {selectedSegmentDetails && (
+              <div className="absolute top-3 right-3 w-[340px] max-w-[calc(100%-1.5rem)] bg-white/95 backdrop-blur-sm rounded-xl border border-blue-100 shadow-xl p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <div className="inline-flex items-center gap-1 text-[11px] text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 mb-2">
+                      <Route className="size-3" />
+                      路段详情
+                    </div>
+                    <h4 className="font-semibold text-sm leading-5 text-slate-900">
+                      第 {selectedSegmentDetails.fromIndex + 1} 站 <ArrowRight className="inline size-3.5" /> 第 {selectedSegmentDetails.toIndex + 1} 站
+                    </h4>
+                    <p className="text-xs text-slate-600 mt-1">
+                      {selectedSegmentDetails.from.title} 到 {selectedSegmentDetails.to.title}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCloseSegmentPanel}
+                    className="size-7 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 flex items-center justify-center"
+                    aria-label="关闭路段详情"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-2 text-xs text-slate-700">
+                  <div className="flex items-start gap-2">
+                    <Navigation className="size-3.5 mt-0.5 text-blue-600" />
+                    <div>
+                      <p className="text-slate-500">推荐交通</p>
+                      <p className="font-medium">{selectedSegmentDetails.to.transport}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Clock3 className="size-3.5 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="text-slate-500">时段衔接</p>
+                      <p className="font-medium">{selectedSegmentDetails.from.time} → {selectedSegmentDetails.to.time}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 mb-0.5">为什么这样安排</p>
+                    <p className="leading-5">{selectedSegmentDetails.to.reason}</p>
+                  </div>
+                  {selectedSegmentDetails.to.alternatives.length > 0 && (
+                    <div>
+                      <p className="text-slate-500 mb-1">可替代路线</p>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedSegmentDetails.to.alternatives.slice(0, 3).map((item) => (
+                          <span
+                            key={item}
+                            className="text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-700"
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateSegment('prev')}
+                    disabled={selectedSegmentStart === 0}
+                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 text-slate-600 enabled:hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    上一段
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateSegment('next')}
+                    disabled={selectedSegmentStart === activities.length - 2}
+                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 text-slate-600 enabled:hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    下一段
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -360,7 +564,7 @@ export function MapView({ activities, planName }: MapViewProps) {
         <h3 className="font-semibold mb-3 sticky top-0 bg-white py-2">路线点位</h3>
         <div className="space-y-2">
           {activities.map((activity, index) => {
-            const markerState = getMarkerFocusState(index, selectedIndex);
+            const markerState = getMarkerFocusState(index, selectedIndex, selectedSegmentStart, hoveredSegmentStart);
             const isDimmed = markerState === 'dimmed';
             const isActive = markerState === 'active';
             const isRelated = markerState === 'related';
