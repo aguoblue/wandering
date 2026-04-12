@@ -8,6 +8,15 @@ interface MapViewProps {
   planName: string;
 }
 
+type MarkerFocusState = 'normal' | 'active' | 'related' | 'dimmed';
+type SegmentFocusState = 'normal' | 'related' | 'dimmed';
+
+interface RouteSegment {
+  polyline: any;
+  start: number;
+  end: number;
+}
+
 // 根据时间段设置不同颜色
 const getPeriodColor = (period: string) => {
   switch (period) {
@@ -39,10 +48,96 @@ const getPeriodBgColor = (period: string) => {
   }
 };
 
+const getMarkerFocusState = (index: number, selectedIndex: number | null): MarkerFocusState => {
+  if (selectedIndex === null) return 'normal';
+  if (index === selectedIndex) return 'active';
+  if (Math.abs(index - selectedIndex) === 1) return 'related';
+  return 'dimmed';
+};
+
+const getSegmentFocusState = (start: number, selectedIndex: number | null): SegmentFocusState => {
+  if (selectedIndex === null) return 'normal';
+  if (start === selectedIndex || start === selectedIndex - 1) return 'related';
+  return 'dimmed';
+};
+
+const getMarkerContent = (index: number, markerColor: string, state: MarkerFocusState) => {
+  const stateStyle = {
+    normal: {
+      border: '2px solid #fff',
+      boxShadow: '0 2px 10px rgba(0,0,0,.24)',
+      opacity: 1,
+      scale: 1,
+      filter: 'none'
+    },
+    active: {
+      border: '3px solid #ffffff',
+      boxShadow: '0 0 0 8px rgba(37,99,235,.22), 0 10px 24px rgba(37,99,235,.35)',
+      opacity: 1,
+      scale: 1.2,
+      filter: 'saturate(1.12)'
+    },
+    related: {
+      border: '2px solid #fff',
+      boxShadow: '0 6px 16px rgba(37,99,235,.22)',
+      opacity: 1,
+      scale: 1.08,
+      filter: 'none'
+    },
+    dimmed: {
+      border: '2px solid #fff',
+      boxShadow: '0 1px 8px rgba(0,0,0,.12)',
+      opacity: 0.3,
+      scale: 0.94,
+      filter: 'grayscale(0.32)'
+    }
+  }[state];
+
+  return `<div style="width:26px;height:26px;border-radius:999px;background:${markerColor};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:${stateStyle.border};box-shadow:${stateStyle.boxShadow};opacity:${stateStyle.opacity};transform:scale(${stateStyle.scale});filter:${stateStyle.filter};transition:all .18s ease;">${index + 1}</div>`;
+};
+
+const getSegmentStyle = (state: SegmentFocusState) => {
+  if (state === 'related') {
+    return {
+      strokeColor: '#2563eb',
+      strokeWeight: 7,
+      strokeOpacity: 1,
+      zIndex: 75
+    };
+  }
+
+  if (state === 'dimmed') {
+    return {
+      strokeColor: '#94a3b8',
+      strokeWeight: 4,
+      strokeOpacity: 0.22,
+      zIndex: 50
+    };
+  }
+
+  return {
+    strokeColor: '#2563eb',
+    strokeWeight: 5,
+    strokeOpacity: 0.85,
+    zIndex: 60
+  };
+};
+
+const getInfoWindowContent = (activity: Activity) => {
+  return `<div style="padding:4px 2px;line-height:1.6;"><strong>${activity.title}</strong><br/>${activity.time} · ${activity.period}</div>`;
+};
+
 export function MapView({ activities, planName }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
+  const markerRefs = useRef<any[]>([]);
+  const segmentRefs = useRef<RouteSegment[]>([]);
+  const infoWindowRef = useRef<any>(null);
+  const ignoreNextMapClickRef = useRef(false);
+
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const amapKey = import.meta.env.VITE_AMAP_KEY;
   const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE;
@@ -51,6 +146,43 @@ export function MapView({ activities, planName }: MapViewProps) {
     () => activities.map((activity) => [activity.coordinates[1], activity.coordinates[0]] as [number, number]),
     [activities]
   );
+
+  const openActivityInfo = (index: number) => {
+    const activity = activities[index];
+    const map = mapRef.current;
+    const infoWindow = infoWindowRef.current;
+
+    if (!activity || !map || !infoWindow) return;
+
+    infoWindow.setContent(getInfoWindowContent(activity));
+    infoWindow.open(map, points[index]);
+  };
+
+  const handleSelectActivity = (index: number) => {
+    setSelectedIndex(index);
+    openActivityInfo(index);
+  };
+
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [activities]);
+
+  useEffect(() => {
+    markerRefs.current.forEach((marker, index) => {
+      const activity = activities[index];
+      if (!marker || !activity) return;
+
+      const markerState = getMarkerFocusState(index, selectedIndex);
+      marker.setContent(getMarkerContent(index, getPeriodColor(activity.period), markerState));
+      marker.setzIndex(markerState === 'active' ? 140 : markerState === 'related' ? 120 : 100);
+    });
+
+    segmentRefs.current.forEach(({ polyline, start }) => {
+      if (!polyline) return;
+      const segmentState = getSegmentFocusState(start, selectedIndex);
+      polyline.setOptions(getSegmentStyle(segmentState));
+    });
+  }, [activities, selectedIndex]);
 
   useEffect(() => {
     if (!containerRef.current || activities.length === 0) return;
@@ -86,8 +218,14 @@ export function MapView({ activities, planName }: MapViewProps) {
           resizeEnable: true
         });
 
+        mapRef.current = map;
         map.addControl(new AMap.Scale());
         map.addControl(new AMap.ToolBar());
+
+        const infoWindow = new AMap.InfoWindow({
+          offset: new AMap.Pixel(0, -24)
+        });
+        infoWindowRef.current = infoWindow;
 
         const markerList = activities.map((activity, index) => {
           const markerColor = getPeriodColor(activity.period);
@@ -96,32 +234,56 @@ export function MapView({ activities, planName }: MapViewProps) {
             position: points[index],
             title: `${index + 1}. ${activity.title}`,
             anchor: 'bottom-center',
-            content: `<div style="width:26px;height:26px;border-radius:999px;background:${markerColor};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.24);">${index + 1}</div>`
-          });
-
-          const infoWindow = new AMap.InfoWindow({
-            content: `<div style="padding:4px 2px;line-height:1.6;"><strong>${activity.title}</strong><br/>${activity.time} · ${activity.period}</div>`,
-            offset: new AMap.Pixel(0, -24)
+            content: getMarkerContent(index, markerColor, 'normal'),
+            zIndex: 100
           });
 
           marker.on('click', () => {
+            ignoreNextMapClickRef.current = true;
+            window.setTimeout(() => {
+              ignoreNextMapClickRef.current = false;
+            }, 180);
+
+            setSelectedIndex(index);
+            infoWindow.setContent(getInfoWindowContent(activity));
             infoWindow.open(map, points[index]);
           });
 
           return marker;
         });
 
-        const polyline = new AMap.Polyline({
-          map,
-          path: points,
-          strokeColor: '#2563eb',
-          strokeWeight: 5,
-          strokeOpacity: 0.85,
-          lineJoin: 'round',
-          lineCap: 'round'
+        const segments: RouteSegment[] = [];
+        for (let i = 0; i < points.length - 1; i += 1) {
+          const polyline = new AMap.Polyline({
+            map,
+            path: [points[i], points[i + 1]],
+            lineJoin: 'round',
+            lineCap: 'round',
+            ...getSegmentStyle('normal')
+          });
+
+          segments.push({ polyline, start: i, end: i + 1 });
+        }
+
+        markerRefs.current = markerList;
+        segmentRefs.current = segments;
+
+        map.on('click', () => {
+          if (ignoreNextMapClickRef.current) {
+            ignoreNextMapClickRef.current = false;
+            return;
+          }
+
+          setSelectedIndex(null);
+          infoWindow.close();
         });
 
-        map.setFitView([...markerList, polyline], false, [60, 60, 60, 60]);
+        map.setFitView(
+          [...markerList, ...segments.map((segment) => segment.polyline)],
+          false,
+          [60, 60, 60, 60]
+        );
+
         setMapReady(true);
       })
       .catch((error: Error) => {
@@ -131,6 +293,12 @@ export function MapView({ activities, planName }: MapViewProps) {
 
     return () => {
       destroyed = true;
+      markerRefs.current = [];
+      segmentRefs.current = [];
+      infoWindowRef.current = null;
+      mapRef.current = null;
+      ignoreNextMapClickRef.current = false;
+
       if (map) {
         map.destroy();
       }
@@ -182,7 +350,7 @@ export function MapView({ activities, planName }: MapViewProps) {
               <MapPin className="size-5 text-blue-600" />
               <h3 className="font-semibold">高德路线预览</h3>
             </div>
-            <p className="text-sm text-muted-foreground">点击地图标记可查看活动信息</p>
+            <p className="text-sm text-muted-foreground">点击标记聚焦关联点位，点击地图空白可重置</p>
           </div>
         )}
       </div>
@@ -191,45 +359,56 @@ export function MapView({ activities, planName }: MapViewProps) {
       <div className="max-h-64 overflow-y-auto px-4 pb-4">
         <h3 className="font-semibold mb-3 sticky top-0 bg-white py-2">路线点位</h3>
         <div className="space-y-2">
-          {activities.map((activity, index) => (
-            <div 
-              key={activity.id}
-              className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:shadow-md transition-shadow"
-            >
-              <div className="flex-shrink-0">
-                <div 
-                  className={`size-8 rounded-full ${getPeriodBgColor(activity.period)} flex items-center justify-center text-white font-bold text-sm`}
-                >
-                  {index + 1}
-                </div>
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <h4 className="font-semibold text-sm">{activity.title}</h4>
-                  <span 
-                    className={`text-xs px-2 py-0.5 rounded-full text-white ${getPeriodBgColor(activity.period)}`}
+          {activities.map((activity, index) => {
+            const markerState = getMarkerFocusState(index, selectedIndex);
+            const isDimmed = markerState === 'dimmed';
+            const isActive = markerState === 'active';
+            const isRelated = markerState === 'related';
+
+            return (
+              <button
+                key={activity.id}
+                type="button"
+                onClick={() => handleSelectActivity(index)}
+                className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border bg-card transition-all ${
+                  isActive
+                    ? 'border-blue-300 bg-blue-50/70 shadow-md ring-2 ring-blue-200'
+                    : isRelated
+                      ? 'border-blue-200 bg-blue-50/35'
+                      : 'hover:shadow-md'
+                } ${isDimmed ? 'opacity-40' : 'opacity-100'}`}
+              >
+                <div className="flex-shrink-0">
+                  <div
+                    className={`size-8 rounded-full ${getPeriodBgColor(activity.period)} flex items-center justify-center text-white font-bold text-sm ${isActive ? 'scale-110' : ''}`}
                   >
-                    {activity.period}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mb-1">{activity.time}</p>
-                <p className="text-sm text-muted-foreground">{activity.description}</p>
-                
-                <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1">
-                    <Navigation className="size-3" />
-                    <span>{activity.duration}</span>
+                    {index + 1}
                   </div>
-                  <div>📍 {activity.coordinates[0].toFixed(4)}, {activity.coordinates[1].toFixed(4)}</div>
                 </div>
-              </div>
-              
-              {index < activities.length - 1 && (
-                <div className="absolute left-7 top-full w-0.5 h-2 bg-gray-300" />
-              )}
-            </div>
-          ))}
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h4 className="font-semibold text-sm">{activity.title}</h4>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full text-white ${getPeriodBgColor(activity.period)}`}
+                    >
+                      {activity.period}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-1">{activity.time}</p>
+                  <p className="text-sm text-muted-foreground">{activity.description}</p>
+
+                  <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Navigation className="size-3" />
+                      <span>{activity.duration}</span>
+                    </div>
+                    <div>📍 {activity.coordinates[0].toFixed(4)}, {activity.coordinates[1].toFixed(4)}</div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
