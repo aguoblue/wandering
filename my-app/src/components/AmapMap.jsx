@@ -7,28 +7,25 @@ import { SearchBox } from './SearchBox'
  * 地图为命令式 API，用 ref 挂 DOM，在 useEffect 里创建/销毁实例。
  */
 
-
-/**
- * 1.渲染地图
- * 2.点击地图触发回调函数 handleMapClick
- * 3.点击搜索框触发回调函数 handleSearchComplete
- * 4.点击交通方式选择触发回调函数 handleTravelModeChange
- * 5.点击位置信息触发回调函数 displayLocation
- * 6.点击当前位置触发回调函数 centerOnLocation
- * 7.点击收藏地点触发回调函数 showLocation
- * 8.点击手动选择触发回调函数 handleMapClick
- * 9.点击路线规划触发回调函数 handleTravelModeChange
- * 10.点击路线规划触发回调函数 handleTravelModeChange
- * 
- * 点击地图任意位置
- * 搜索框
- */
-
 const KEY = import.meta.env.VITE_AMAP_KEY
 const SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE
 
 /** 默认中心 [lng, lat]，GCJ-02 */
 const DEFAULT_CENTER = [116.397428, 39.90923]
+const ORIGIN_NODE_ID = 'origin:current-location'
+
+const MARKER_STYLE_MAP = {
+  default: { opacity: 1, zIndex: 110 },
+  connected: { opacity: 1, zIndex: 120 },
+  active: { opacity: 1, zIndex: 140 },
+  dimmed: { opacity: 0.28, zIndex: 80 },
+}
+
+const EDGE_STYLE_MAP = {
+  default: { strokeColor: '#1e8de8', strokeWeight: 6, strokeOpacity: 0.82 },
+  active: { strokeColor: '#ff6a00', strokeWeight: 8, strokeOpacity: 0.96 },
+  dimmed: { strokeColor: '#8aa0b6', strokeWeight: 4, strokeOpacity: 0.2 },
+}
 
 const normalizeLocation = (location) => {
   if (!location) return null
@@ -69,6 +66,81 @@ const toAMapLngLat = (AMap, location) => {
   return new AMap.LngLat(normalized.lng, normalized.lat)
 }
 
+const toPathPosition = (point) => {
+  const normalized = normalizeLocation(point)
+  return normalized ? [normalized.lng, normalized.lat] : null
+}
+
+const makeLocationNodeId = (location) => {
+  const normalized = normalizeLocation(location)
+  if (!normalized) return null
+  return `destination:${normalized.lng.toFixed(6)},${normalized.lat.toFixed(6)}`
+}
+
+const renderMarkerContent = (state, kind = 'destination') => {
+  const safeState = ['default', 'connected', 'active', 'dimmed'].includes(state) ? state : 'default'
+  const safeKind = kind === 'origin' ? 'origin' : 'destination'
+  return `<div class="map-node map-node--${safeKind} map-node--${safeState}"></div>`
+}
+
+const buildInfoWindowContent = (poi) => {
+  return `
+    <div style="padding: 10px; font-size: 14px;">
+      <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
+      <div style="color: #666;">${poi.address || '地址未知'}</div>
+      <div style="color: #999; font-size: 12px; margin-top: 5px;">
+        类型: ${poi.type || '未知'}
+      </div>
+    </div>
+  `
+}
+
+const extractRoutePath = (travelMode, result, startPosition, endPosition) => {
+  const routes = result?.routes || []
+  const firstRoute = routes[0]
+
+  if (!firstRoute) {
+    return [startPosition, endPosition]
+  }
+
+  const appendSegment = (target, segment = []) => {
+    segment.forEach((point) => {
+      const position = toPathPosition(point)
+      if (position) {
+        target.push(position)
+      }
+    })
+  }
+
+  const path = []
+
+  if (travelMode === 'riding') {
+    if (Array.isArray(firstRoute.rides)) {
+      firstRoute.rides.forEach((ride) => appendSegment(path, ride?.path))
+    }
+
+    if (path.length === 0 && Array.isArray(firstRoute.steps)) {
+      firstRoute.steps.forEach((step) => appendSegment(path, step?.path))
+    }
+  } else {
+    if (Array.isArray(firstRoute.steps)) {
+      firstRoute.steps.forEach((step) => appendSegment(path, step?.path))
+    }
+  }
+
+  if (path.length === 0) {
+    return [startPosition, endPosition]
+  }
+
+  const withEndpoints = [startPosition, ...path, endPosition].filter(Boolean)
+
+  return withEndpoints.filter((position, index, arr) => {
+    if (index === 0) return true
+    const previous = arr[index - 1]
+    return previous[0] !== position[0] || previous[1] !== position[1]
+  })
+}
+
 export const AmapMap = forwardRef(function AmapMap({
   zoom = 11,
   center = DEFAULT_CENTER,
@@ -79,34 +151,237 @@ export const AmapMap = forwardRef(function AmapMap({
 }, ref) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
-  const searchMarkerRef = useRef(null)
-  const routeRef = useRef(null)
+  const nodesRef = useRef(new Map())
+  const edgesRef = useRef(new Map())
+  const routeServiceRef = useRef(null)
+  const activeNodeIdRef = useRef(null)
 
   const [searchEndPoint, setSearchEndPoint] = useState(null)
   const [showTravelMode, setShowTravelMode] = useState(false)
   const [selectedTravelMode, setSelectedTravelMode] = useState('')
 
-  const clearRoute = useCallback(() => {
-    if (searchMarkerRef.current) {
-      if (mapRef.current) {
-        try {
-          mapRef.current.remove(searchMarkerRef.current)
-        } catch (e) {
-          console.error('清除搜索标记失败:', e)
-        }
+  const setMarkerVisualState = useCallback((node, state) => {
+    if (!node?.marker) return
+    const style = MARKER_STYLE_MAP[state] || MARKER_STYLE_MAP.default
+
+    node.marker.setContent(renderMarkerContent(state, node.kind))
+    node.marker.setOpacity(style.opacity)
+    node.marker.setzIndex(style.zIndex)
+    node.marker.setAnimation(state === 'active' ? 'AMAP_ANIMATION_BOUNCE' : null)
+  }, [])
+
+  const setEdgeVisualState = useCallback((edge, state) => {
+    if (!edge?.polyline) return
+    const style = EDGE_STYLE_MAP[state] || EDGE_STYLE_MAP.default
+
+    edge.polyline.setOptions({
+      strokeColor: style.strokeColor,
+      strokeWeight: style.strokeWeight,
+      strokeOpacity: style.strokeOpacity,
+    })
+  }, [])
+
+  const collectConnectedNodeIds = useCallback((nodeId) => {
+    const connectedNodeIds = new Set([nodeId])
+
+    edgesRef.current.forEach((edge) => {
+      if (edge.fromId === nodeId || edge.toId === nodeId) {
+        connectedNodeIds.add(edge.fromId)
+        connectedNodeIds.add(edge.toId)
       }
-      searchMarkerRef.current = null
+    })
+
+    return connectedNodeIds
+  }, [])
+
+  const applyFocusStyles = useCallback((focusedNodeId) => {
+    activeNodeIdRef.current = focusedNodeId || null
+
+    if (!focusedNodeId) {
+      nodesRef.current.forEach((node) => setMarkerVisualState(node, 'default'))
+      edgesRef.current.forEach((edge) => setEdgeVisualState(edge, 'default'))
+      return
     }
 
-    if (routeRef.current) {
-      try {
-        routeRef.current.clear()
-      } catch (e) {
-        console.error('清除路线失败:', e)
+    const connectedNodeIds = collectConnectedNodeIds(focusedNodeId)
+
+    nodesRef.current.forEach((node, nodeId) => {
+      if (nodeId === focusedNodeId) {
+        setMarkerVisualState(node, 'active')
+      } else if (connectedNodeIds.has(nodeId)) {
+        setMarkerVisualState(node, 'connected')
+      } else {
+        setMarkerVisualState(node, 'dimmed')
       }
-      routeRef.current = null
+    })
+
+    edgesRef.current.forEach((edge) => {
+      const isFocusedEdge = edge.fromId === focusedNodeId || edge.toId === focusedNodeId
+      setEdgeVisualState(edge, isFocusedEdge ? 'active' : 'dimmed')
+    })
+  }, [collectConnectedNodeIds, setEdgeVisualState, setMarkerVisualState])
+
+  const removeEdge = useCallback((edgeId) => {
+    const edge = edgesRef.current.get(edgeId)
+    if (!edge) return
+
+    if (mapRef.current && edge.polyline) {
+      mapRef.current.remove(edge.polyline)
     }
+
+    edgesRef.current.delete(edgeId)
   }, [])
+
+  const removeNode = useCallback((nodeId) => {
+    const node = nodesRef.current.get(nodeId)
+    if (!node) return
+
+    if (node.clickHandler) {
+      node.marker.off('click', node.clickHandler)
+    }
+
+    if (mapRef.current && node.marker) {
+      mapRef.current.remove(node.marker)
+    }
+
+    nodesRef.current.delete(nodeId)
+  }, [])
+
+  const upsertNode = useCallback((nodePayload) => {
+    if (!mapRef.current || !window.AMap) return null
+
+    const normalizedLocation = normalizeLocation(nodePayload.location)
+    if (!normalizedLocation) return null
+
+    const position = [normalizedLocation.lng, normalizedLocation.lat]
+    const nodeId = nodePayload.id
+
+    if (!nodeId) return null
+
+    const existedNode = nodesRef.current.get(nodeId)
+
+    if (existedNode) {
+      existedNode.location = normalizedLocation
+      existedNode.name = nodePayload.name
+      existedNode.address = nodePayload.address
+      existedNode.type = nodePayload.type
+      existedNode.kind = nodePayload.kind || 'destination'
+      existedNode.marker.setPosition(position)
+      existedNode.marker.setTitle(nodePayload.name)
+      existedNode.marker.setLabel({
+        content: nodePayload.name,
+        direction: 'top',
+      })
+      if (existedNode.infoWindow) {
+        existedNode.infoWindow.setContent(buildInfoWindowContent(nodePayload))
+      }
+      return existedNode
+    }
+
+    const marker = new window.AMap.Marker({
+      position,
+      title: nodePayload.name,
+      map: mapRef.current,
+      animation: 'AMAP_ANIMATION_DROP',
+      content: renderMarkerContent('default', nodePayload.kind),
+      offset: new window.AMap.Pixel(-10, -10),
+      label: {
+        content: nodePayload.name,
+        direction: 'top',
+      }
+    })
+
+    const infoWindow = new window.AMap.InfoWindow({
+      content: buildInfoWindowContent(nodePayload),
+      offset: new window.AMap.Pixel(0, -30),
+      closeWhenClickMap: true,
+    })
+
+    const nextNode = {
+      id: nodeId,
+      location: normalizedLocation,
+      marker,
+      infoWindow,
+      name: nodePayload.name,
+      address: nodePayload.address,
+      type: nodePayload.type,
+      kind: nodePayload.kind || 'destination',
+      clickHandler: null,
+    }
+
+    const clickHandler = () => {
+      infoWindow.open(mapRef.current, position)
+      applyFocusStyles(nodeId)
+    }
+
+    marker.on('click', clickHandler)
+    nextNode.clickHandler = clickHandler
+
+    nodesRef.current.set(nodeId, nextNode)
+    return nextNode
+  }, [applyFocusStyles])
+
+  const addOrUpdateEdge = useCallback(({ edgeId, fromId, toId, path, travelMode }) => {
+    if (!mapRef.current || !window.AMap || !edgeId || !fromId || !toId) return
+
+    const existedEdge = edgesRef.current.get(edgeId)
+    if (existedEdge) {
+      existedEdge.path = path
+      existedEdge.travelMode = travelMode
+      existedEdge.polyline.setPath(path)
+      return
+    }
+
+    const polyline = new window.AMap.Polyline({
+      path,
+      map: mapRef.current,
+      strokeColor: EDGE_STYLE_MAP.default.strokeColor,
+      strokeOpacity: EDGE_STYLE_MAP.default.strokeOpacity,
+      strokeWeight: EDGE_STYLE_MAP.default.strokeWeight,
+      lineJoin: 'round',
+      lineCap: 'round',
+      showDir: true,
+      zIndex: 90,
+    })
+
+    polyline.on('click', () => {
+      applyFocusStyles(toId)
+    })
+
+    edgesRef.current.set(edgeId, {
+      id: edgeId,
+      fromId,
+      toId,
+      path,
+      travelMode,
+      polyline,
+    })
+  }, [applyFocusStyles])
+
+  const clearTransitRouteService = useCallback(() => {
+    if (!routeServiceRef.current) return
+
+    try {
+      routeServiceRef.current.clear()
+    } catch (e) {
+      console.error('清除地铁路线失败:', e)
+    }
+
+    routeServiceRef.current = null
+  }, [])
+
+  const clearAllRoutes = useCallback(() => {
+    clearTransitRouteService()
+
+    const currentEdgeIds = Array.from(edgesRef.current.keys())
+    currentEdgeIds.forEach((edgeId) => removeEdge(edgeId))
+
+    removeNode(ORIGIN_NODE_ID)
+
+    if (activeNodeIdRef.current === ORIGIN_NODE_ID) {
+      applyFocusStyles(null)
+    }
+  }, [applyFocusStyles, clearTransitRouteService, removeEdge, removeNode])
 
   const centerOnLocation = useCallback((location) => {
     const position = toAMapPosition(location)
@@ -119,56 +394,40 @@ export const AmapMap = forwardRef(function AmapMap({
 
   const displayLocation = useCallback((poi) => {
     const normalizedLocation = normalizeLocation(poi?.location)
-    const position = toAMapPosition(poi?.location)
 
-    if (!mapRef.current || !normalizedLocation || !position || !window.AMap) return
-    // 清除路线
-    clearRoute()
-    // 设置终点
-    setSearchEndPoint({
+    if (!mapRef.current || !normalizedLocation || !window.AMap) return
+
+    const nodeId = makeLocationNodeId(normalizedLocation)
+    if (!nodeId) return
+
+    const locationPayload = {
       ...poi,
-      location: normalizedLocation
+      location: normalizedLocation,
+      id: nodeId,
+      kind: 'destination',
+      name: poi.name || poi.address || '选中地点',
+      address: poi.address || '地址未知',
+      type: poi.type || '未知',
+    }
+
+    upsertNode(locationPayload)
+
+    setSearchEndPoint({
+      ...locationPayload,
+      nodeId,
     })
-    // 显示交通方式选择
+
     setShowTravelMode(true)
-    // 清空交通方式选择
     setSelectedTravelMode('')
-
-    searchMarkerRef.current = new window.AMap.Marker({
-      position,
-      title: poi.name,
-      animation: 'AMAP_ANIMATION_DROP',
-      map: mapRef.current,
-      label: {
-        content: poi.name,
-        direction: 'top',
-      }
-    })
-
-    const infoWindow = new window.AMap.InfoWindow({
-      content: `
-        <div style="padding: 10px; font-size: 14px;">
-          <div style="font-weight: bold; margin-bottom: 5px;">${poi.name}</div>
-          <div style="color: #666;">${poi.address || '地址未知'}</div>
-          <div style="color: #999; font-size: 12px; margin-top: 5px;">
-            类型: ${poi.type || '未知'}
-          </div>
-        </div>
-      `,
-      offset: new window.AMap.Pixel(0, -30),
-      closeWhenClickMap: true,
-    })
-
-    searchMarkerRef.current.on('click', () => {
-      infoWindow.open(mapRef.current, position)
-    })
 
     centerOnLocation(normalizedLocation)
 
     if (window.updateSearchBoxInputFromMap) {
-      window.updateSearchBoxInputFromMap(poi.name)
+      window.updateSearchBoxInputFromMap(locationPayload.name)
     }
-  }, [centerOnLocation, clearRoute])
+
+    applyFocusStyles(nodeId)
+  }, [applyFocusStyles, centerOnLocation, upsertNode])
 
   const showLocation = useCallback((locationData) => {
     const normalizedLocation = normalizeLocation(locationData?.location)
@@ -188,10 +447,9 @@ export const AmapMap = forwardRef(function AmapMap({
   }), [centerOnLocation, showLocation])
 
   const handleMapClick = useCallback((e) => {
-    // 经纬度坐标
     const clickPosition = e.lnglat
     if (!clickPosition || !window.AMap) return
-    // 插件 逆地理编码 将经纬度坐标转换为地址信息
+
     window.AMap.plugin('AMap.Geocoder', () => {
       const geocoder = new window.AMap.Geocoder({
         radius: 100,
@@ -206,9 +464,9 @@ export const AmapMap = forwardRef(function AmapMap({
             address: addressInfo.formattedAddress,
             location: normalizeLocation(clickPosition)
           }
-          // 父组件回调函数 设置终点
+
           onLocationSelect?.(locationData)
-          // 显示位置信息
+
           displayLocation({
             ...locationData,
             type: '手动选择'
@@ -236,17 +494,35 @@ export const AmapMap = forwardRef(function AmapMap({
     })
   }, [displayLocation, onLocationSelect])
 
-  const handleTravelModeChange = async (travelMode) => {
-    console.log('=== handleTravelModeChange 被调用 ===')
-    console.log('交通方式:', travelMode)
-    console.log('searchEndPoint:', searchEndPoint)
+  const getCurrentPosition = useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (!window.AMap) {
+        reject(new Error('AMap 未加载'))
+        return
+      }
 
-    if (!mapRef.current || !searchEndPoint?.location) {
-      console.log('检查失败: mapRef.current 或 searchEndPoint.location 不存在')
+      window.AMap.plugin('AMap.Geolocation', () => {
+        const geolocation = new window.AMap.Geolocation({
+          enableHighAccuracy: true,
+          timeout: 10000,
+        })
+        geolocation.getCurrentPosition((status, result) => {
+          if (status === 'complete' && result?.position) {
+            resolve(result.position)
+          } else {
+            reject(new Error('定位失败'))
+          }
+        })
+      })
+    })
+  }, [])
+
+  const handleTravelModeChange = useCallback(async (travelMode) => {
+    if (!mapRef.current || !searchEndPoint?.location || !searchEndPoint?.nodeId) {
       return
     }
 
-    clearRoute()
+    clearTransitRouteService()
 
     let startPoint
     try {
@@ -273,15 +549,7 @@ export const AmapMap = forwardRef(function AmapMap({
       transit: 'AMap.Transfer',
     }
 
-    const modeLabelMap = {
-      driving: '驾车',
-      walking: '步行',
-      riding: '骑行',
-      transit: '地铁',
-    }
-
     const plugin = pluginMap[travelMode]
-    const modeLabel = modeLabelMap[travelMode]
     if (!plugin) {
       console.error('不支持的交通方式:', travelMode)
       return
@@ -302,134 +570,87 @@ export const AmapMap = forwardRef(function AmapMap({
           return
         }
 
-        let route
+        const startPosition = toAMapPosition(startPoint.location)
+        const endPosition = toAMapPosition(searchEndPoint.location)
+        if (!startPosition || !endPosition) return
 
-        const handleTransitSearch = () => {
+        upsertNode({
+          id: ORIGIN_NODE_ID,
+          location: startPoint.location,
+          name: '当前位置',
+          address: '路线起点',
+          type: '起点',
+          kind: 'origin',
+        })
+
+        const edgeId = `${travelMode}:${ORIGIN_NODE_ID}->${searchEndPoint.nodeId}`
+        const removableEdgeIds = []
+        edgesRef.current.forEach((edge, candidateEdgeId) => {
+          if (edge.toId === searchEndPoint.nodeId) {
+            removableEdgeIds.push(candidateEdgeId)
+          }
+        })
+        removableEdgeIds.forEach((candidateEdgeId) => removeEdge(candidateEdgeId))
+
+        const drawRouteResult = (result) => {
+          const path = extractRoutePath(travelMode, result, startPosition, endPosition)
+          addOrUpdateEdge({
+            edgeId,
+            fromId: ORIGIN_NODE_ID,
+            toId: searchEndPoint.nodeId,
+            path,
+            travelMode,
+          })
+          applyFocusStyles(searchEndPoint.nodeId)
+        }
+
+        if (travelMode === 'transit') {
           const geocoder = new AMap.Geocoder()
           geocoder.getAddress(endLngLat, (status, result) => {
-            if (status === 'complete' && result?.regeocode?.addressComponent?.city) {
-              const city = result.regeocode.addressComponent.city
-              route = new AMap.Transfer({
-                map: mapRef.current,
-                city,
-              })
-              routeRef.current = route
-              route.search(startLngLat, endLngLat, (transitStatus, transitResult) => {
-                if (transitStatus === 'complete') {
-                  console.log(`=== ${modeLabel}路线规划成功 ===`)
-                  console.log('起点:', startPoint)
-                  console.log('终点:', searchEndPoint)
-                  console.log('方案数:', transitResult.plans?.length)
-                  if (transitResult.plans?.length > 0) {
-                    const firstPlan = transitResult.plans[0]
-                    console.log('首选方案:')
-                    console.log('  总距离:', firstPlan.distance, '米')
-                    console.log('  总时间:', firstPlan.time, '秒')
-                    console.log('  票价:', firstPlan.cost, '元')
-                    console.log('  换乘次数:', firstPlan.transfers)
-                  }
-                  console.log('完整结果:', transitResult)
-                  console.log('========================')
-                } else {
-                  console.error(`${modeLabel}路线规划失败`, transitResult)
-                }
-              })
-            } else {
+            if (status !== 'complete' || !result?.regeocode?.addressComponent?.city) {
               console.error('获取城市信息失败', result)
+              return
             }
+
+            const city = result.regeocode.addressComponent.city
+            const transfer = new AMap.Transfer({
+              map: null,
+              city,
+            })
+            routeServiceRef.current = transfer
+
+            transfer.search(startLngLat, endLngLat, (transitStatus, transitResult) => {
+              if (transitStatus === 'complete') {
+                drawRouteResult(transitResult)
+              } else {
+                console.error('地铁路线规划失败', transitResult)
+              }
+            })
           })
+          return
         }
 
-        switch (travelMode) {
-          case 'driving':
-            route = new AMap.Driving({
-              map: mapRef.current,
-              panel: null,
-            })
-            route.search(startLngLat, endLngLat, (status, result) => {
-              if (status === 'complete') {
-                console.log(`=== ${modeLabel}路线规划成功 ===`)
-                console.log('起点:', startPoint)
-                console.log('终点:', searchEndPoint)
-                console.log('总距离:', result.routes?.[0]?.distance, '米')
-                console.log('总时间:', result.routes?.[0]?.time, '秒')
-                console.log('完整结果:', result)
-                console.log('========================')
-              } else {
-                console.error(`${modeLabel}路线规划失败`, result)
-              }
-            })
-            break
-          case 'walking':
-            route = new AMap.Walking({
-              map: mapRef.current,
-            })
-            route.search(startLngLat, endLngLat, (status, result) => {
-              if (status === 'complete') {
-                console.log(`=== ${modeLabel}路线规划成功 ===`)
-                console.log('起点:', startPoint)
-                console.log('终点:', searchEndPoint)
-                console.log('总距离:', result.routes?.[0]?.distance, '米')
-                console.log('总时间:', result.routes?.[0]?.time, '秒')
-                console.log('完整结果:', result)
-                console.log('========================')
-              } else {
-                console.error(`${modeLabel}路线规划失败`, result)
-              }
-            })
-            break
-          case 'riding':
-            route = new AMap.Riding({
-              map: mapRef.current,
-            })
-            route.search(startLngLat, endLngLat, (status, result) => {
-              if (status === 'complete') {
-                console.log(`=== ${modeLabel}路线规划成功 ===`)
-                console.log('起点:', startPoint)
-                console.log('终点:', searchEndPoint)
-                console.log('总距离:', result.routes?.[0]?.distance, '米')
-                console.log('总时间:', result.routes?.[0]?.time, '秒')
-                console.log('完整结果:', result)
-                console.log('========================')
-              } else {
-                console.error(`${modeLabel}路线规划失败`, result)
-              }
-            })
-            break
-          case 'transit':
-            handleTransitSearch()
-            return
+        const routeBuilders = {
+          driving: () => new AMap.Driving({ map: null, panel: null }),
+          walking: () => new AMap.Walking({ map: null }),
+          riding: () => new AMap.Riding({ map: null }),
         }
 
-        routeRef.current = route
+        const route = routeBuilders[travelMode]?.()
+        if (!route) return
+
+        route.search(startLngLat, endLngLat, (status, result) => {
+          if (status === 'complete') {
+            drawRouteResult(result)
+          } else {
+            console.error(`${travelMode}路线规划失败`, result)
+          }
+        })
       })
       .catch((err) => {
         console.error('路线插件加载失败', err)
       })
-  }
-
-  const getCurrentPosition = () => {
-    return new Promise((resolve, reject) => {
-      if (!window.AMap) {
-        reject(new Error('AMap 未加载'))
-        return
-      }
-
-      window.AMap.plugin('AMap.Geolocation', () => {
-        const geolocation = new window.AMap.Geolocation({
-          enableHighAccuracy: true,
-          timeout: 10000,
-        })
-        geolocation.getCurrentPosition((status, result) => {
-          if (status === 'complete' && result?.position) {
-            resolve(result.position)
-          } else {
-            reject(new Error('定位失败'))
-          }
-        })
-      })
-    })
-  }
+  }, [addOrUpdateEdge, applyFocusStyles, clearTransitRouteService, getCurrentPosition, removeEdge, searchEndPoint, upsertNode])
 
   useEffect(() => {
     if (!KEY) return
@@ -454,7 +675,6 @@ export const AmapMap = forwardRef(function AmapMap({
           viewMode: '2D',
         })
         mapRef.current.addControl(new AMap.Scale())
-        // 点击地图触发回调函数handleMapClick
         mapRef.current.on('click', handleMapClick)
 
         AMap.plugin('AMap.Geolocation', () => {
@@ -490,16 +710,22 @@ export const AmapMap = forwardRef(function AmapMap({
         console.error('高德地图加载失败', err)
       })
 
+    const nodesStore = nodesRef.current
+
     return () => {
       cancelled = true
       if (mapRef.current) {
         mapRef.current.off('click', handleMapClick)
-        clearRoute()
+        clearAllRoutes()
+
+        const nodeIds = Array.from(nodesStore.keys())
+        nodeIds.forEach((nodeId) => removeNode(nodeId))
+
         mapRef.current.destroy()
         mapRef.current = null
       }
     }
-  }, [autoLocate, center, clearRoute, handleMapClick, showLocateButton, zoom])
+  }, [autoLocate, center, clearAllRoutes, handleMapClick, removeNode, showLocateButton, zoom])
 
   if (!KEY) {
     return (

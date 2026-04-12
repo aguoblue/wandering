@@ -33,6 +33,44 @@
   min-width: 100%;
 }
 
+.map-node {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+  transform-origin: center center;
+  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+}
+
+.map-node--destination {
+  background: #2f81f7;
+}
+
+.map-node--origin {
+  background: #17b26a;
+}
+
+.map-node--default {
+  transform: scale(1);
+}
+
+.map-node--connected {
+  transform: scale(1.1);
+  filter: saturate(1.2);
+}
+
+.map-node--active {
+  transform: scale(1.3);
+  filter: saturate(1.4) brightness(1.06);
+  box-shadow: 0 0 0 6px rgba(255, 106, 0, 0.16), 0 8px 18px rgba(0, 0, 0, 0.22);
+}
+
+.map-node--dimmed {
+  transform: scale(0.9);
+  filter: grayscale(0.65);
+}
+
 .amap-map--placeholder {
   display: flex;
   flex-direction: column;

@@ -185,3 +185,12 @@
 1. **`figma/package.json`**：在 `devDependencies` 中增加 `@types/react`、`@types/react-dom`（与 `react` 19 对齐），解决 `react/jsx-runtime` 无声明文件、隐式 `any` 的 TypeScript 报错。
 2. **安装**：使用 `npm install --legacy-peer-deps` 完成安装（与现有 peer 依赖策略一致）。
 3. **验证**：`npm run build` 与 `tsc --noEmit`（通过 `npx -p typescript@5.8.3 tsc`）通过。
+
+# 20260412 地图点位聚焦与线路降噪
+
+1. **点位关系高亮**：`my-app/src/components/AmapMap.jsx` 从“单 marker 引用”改为“节点/边集合管理”，支持点击 marker 时聚焦当前点、提亮相连点并淡化其余点位。
+2. **路线关系高亮**：驾车/步行/骑行/地铁改为提取路径后用 `AMap.Polyline` 自绘，点击点位时仅凸显关联线路，其他线路降透明度显示。
+3. **交互细节**：
+   - 点位按状态切换视觉层级（`active / connected / dimmed`），并通过 `zIndex` 保证焦点在最上层。
+   - 新增起点节点（当前位置）并与终点节点建立边关系，便于表达“点击点位 -> 高亮关联路径”。
+4. **样式补充**：`my-app/src/App.css` 新增 `.map-node` 系列样式，包含缩放、饱和度、阴影与淡化效果，提升地图上的焦点引导。
