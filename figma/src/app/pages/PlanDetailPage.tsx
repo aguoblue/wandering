@@ -1,5 +1,4 @@
-import { useParams, Link, useNavigate } from 'react-router';
-import { mockPlans } from '../data/mockPlans';
+import { useParams, useNavigate } from 'react-router';
 import { DayItinerary } from '../components/DayItinerary';
 import { MapView } from '../components/MapView';
 import { Button } from '../components/ui/button';
@@ -8,13 +7,14 @@ import { Badge } from '../components/ui/badge';
 import { ArrowLeft, Calendar, TrendingUp, Wallet, MapIcon, List } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useState } from 'react';
+import { getAllPlans } from '../data/plansStore';
 
 export function PlanDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeDay, setActiveDay] = useState(0);
   
-  const plan = mockPlans.find(p => p.id === id);
+  const plan = getAllPlans().find(p => p.id === id);
   
   if (!plan) {
     return (

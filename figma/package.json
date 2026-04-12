@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "ai:server": "node server/ai-server.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

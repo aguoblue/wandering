@@ -219,3 +219,13 @@
    - 点击点位时清空线路选中，恢复点位详情模式；
    - 点击地图空白重置所有焦点状态。
 5. **可用性增强**：路段详情卡支持“上一段 / 下一段”快速切换，便于连续浏览整条路线的移动信息。
+
+# 20260412 figma 接入 AI 生成计划最小闭环
+
+1. **新增本地 AI 接口服务**：添加 `figma/server/ai-server.mjs`，提供 `POST /api/ai/generate-plan`，按既定 TravelPlan schema 向 Anthropic 请求并返回结构化数组。
+2. **前端请求封装**：新增 `figma/src/app/services/aiPlanClient.ts`，统一处理 AI 计划生成接口调用与错误处理。
+3. **提示词模板沉淀**：新增 `figma/src/app/data/aiPlanPrompts.ts`，将系统提示词和用户提示词构建逻辑模块化，便于后续扩展参数。
+4. **计划持久化与合并读取**：新增 `figma/src/app/data/plansStore.ts`，将 AI 生成计划写入 `localStorage` 并与 `mockPlans` 合并展示。
+5. **列表页接入生成入口**：`figma/src/app/pages/PlansListPage.tsx` 新增城市输入与“一键 AI 生成”按钮，生成结果即时插入卡片列表并可搜索。
+6. **详情页兼容 AI 计划**：`figma/src/app/pages/PlanDetailPage.tsx` 改为从合并后的计划集合读取，确保点击 AI 新计划可进入详情页。
+7. **本地联调支持**：`figma/vite.config.ts` 增加 `/api` 代理到 `http://localhost:8787`，`figma/package.json` 增加 `ai:server` 脚本，新增 `figma/.env.ai.example` 环境变量示例。
