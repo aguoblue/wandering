@@ -1,3 +1,13 @@
+# 20260415 figma 地图搜索与选点交互优化
+
+1. **搜索提示恢复**：在 `figma/src/app/services/amapDiscoveryClient.ts` 新增 `searchLocationSuggestions`，并在 `PlansListPage` 输入时联动显示下拉地点提示，可点击提示直接定位。
+2. **搜索框回填定位位置**：统一将搜索框内容回填为最新定位地址（手动搜索、自动定位、地图右下角定位按钮、点击地图选点都会更新）。
+3. **地图点击重置 Marker 逻辑**：`DiscoveryMapView` 新增地图点击事件，点击后会先清除已有 marker，再将点击点设为地图中心并渲染新 marker，同时逆地理解析地址并同步到页面状态。
+4. **联想触发来源区分**：`PlansListPage` 新增“用户输入/程序回填”区分逻辑，仅用户手动输入时才请求并展示联想；程序回填地址时会清空并关闭联想面板，避免联想常驻不消失。
+5. **主点定位后自动周边检索**：`DiscoveryMapView` 在主定位点确定后自动搜索周边“景点+美食”并渲染分类 marker（景点绿点/美食橙点）；点击 POI marker 会弹出详情卡片（名称、分类、地址、距离、电话）。
+6. **周边列表与勾选联动**：`PlansListPage` 新增按距离排序的周边 POI 列表（支持全部/景点/美食筛选）；列表点击改为勾选态切换，勾选后地图对应 marker 高亮，再点可取消并恢复原样，地图点选与列表勾选双向同步。
+7. **POI Marker 动画优化**：`DiscoveryMapView` 将周边 marker 改为按距离由近到远逐个浮现（stagger）渲染，增强探索感；勾选状态仍实时联动到 marker 高亮样式。
+
 # 20260403 init repo
 - try to use babel
 - 类组件、jsx
@@ -229,3 +239,60 @@
 5. **列表页接入生成入口**：`figma/src/app/pages/PlansListPage.tsx` 新增城市输入与“一键 AI 生成”按钮，生成结果即时插入卡片列表并可搜索。
 6. **详情页兼容 AI 计划**：`figma/src/app/pages/PlanDetailPage.tsx` 改为从合并后的计划集合读取，确保点击 AI 新计划可进入详情页。
 7. **本地联调支持**：`figma/vite.config.ts` 增加 `/api` 代理到 `http://localhost:8787`，`figma/package.json` 增加 `ai:server` 脚本，新增 `figma/.env.ai.example` 环境变量示例。
+
+# 20260414 figma 首页接入高德搜索定位与20个候选点
+
+1. **新增候选点发现服务**：新增 `figma/src/app/services/amapDiscoveryClient.ts`，封装高德地点检索与周边检索流程：先按关键词定位中心点，再混合拉取附近“美食/景点”候选。
+2. **候选点混合策略**：对高德返回数据做去重、距离计算与分类（美食/景点），按混合策略输出最多 20 个候选点，保证首版有稳定的“混合推荐”结果。
+3. **新增首页地图组件**：新增 `figma/src/app/components/DiscoveryMapView.tsx`，在首页展示搜索中心点与候选点 Marker，并自动 fit view。
+4. **首页交互升级**：`figma/src/app/pages/PlansListPage.tsx` 新增“地点搜索与候选点推荐”模块，支持输入地点、回车/按钮搜索、地图定位、候选点浮现式卡片展示（含类别与距离）。
+5. **构建验证**：`cd figma && npm run build` 通过。
+
+# 20260414 figma 首页无搜索自动定位
+
+1. **自动定位入口**：`figma/src/app/pages/PlansListPage.tsx` 新增首屏 `useEffect`，在用户未主动搜索时自动请求浏览器定位并拉取附近候选点。
+2. **经纬度发现能力**：`figma/src/app/services/amapDiscoveryClient.ts` 新增 `discoverNearbyCandidatesByLocation`，支持按经纬度逆地理解析后直接混合检索周边美食/景点。
+3. **稳定性处理**：自动定位增加单次尝试控制，避免失败后反复触发定位请求；失败时提示用户手动搜索。
+
+# 20260414 figma 候选点 Marker 视觉与交互升级
+
+1. **中心点 Marker 重构**：`figma/src/app/components/DiscoveryMapView.tsx` 将“搜索中心”改为“你在这里”胶囊样式，增加呼吸光晕动画，提升定位识别度。
+2. **候选点状态化渲染**：候选 Marker 增加 `normal / hovered / active / dimmed` 四态，支持悬停放大、选中高亮、非焦点点位弱化。
+3. **点位信息弹层**：点击候选点后展示 InfoWindow（名称、类别、地址），并在地图空白点击时清空焦点态。
+
+# 20260414 figma 去除候选点并启用高德官方定位按钮
+
+1. **候选点功能下线**：`figma/src/app/pages/PlansListPage.tsx` 移除“20 个候选点推荐”列表与对应状态逻辑，首页改为纯“地点搜索与定位”流程。
+2. **定位服务简化**：`figma/src/app/services/amapDiscoveryClient.ts` 重构为仅提供地点定位能力：关键词定位（PlaceSearch）与坐标逆地理定位（Geocoder）。
+3. **地图控件升级**：`figma/src/app/components/DiscoveryMapView.tsx` 接入高德官方 `AMap.Geolocation` 控件（右下角定位按钮），支持一键定位并回填到页面中心点信息。
+4. **首屏体验保留**：页面首次进入仍会尝试一次自动定位，失败时可手动搜索或点击地图右下角高德定位按钮。
+
+# 20260415 figma DiscoveryMapView 自动定位后 Marker 不显示
+
+1. **原因**：地图初始化 `useEffect` 依赖了 `center` 与父组件每次渲染新建的 `onLocate`/`onLocateError`，`center` 更新或父重渲染会销毁并异步重建地图，与放置 Marker 的 effect 竞态；且自动定位若早于地图 `load` 完成，Marker effect 因 `mapRef` 仍为空提前返回后不会再次执行。
+2. **修复**：`DiscoveryMapView` 地图仅挂载时创建一次；定位回调改用 `ref`；增加 `mapReady` 状态，待地图就绪后再根据 `center` 创建/更新中心 Marker 与视野。
+
+# 20260415 figma 首屏自动定位与按钮定位不一致
+
+1. **原因**：浏览器 `navigator.geolocation` 返回 **WGS84（GPS）**，高德底图与 `AMap.Geolocation` 结果为 **GCJ-02**；首屏用浏览器坐标直接画点会偏几百米，右下角按钮走 SDK，故与地图一致。
+2. **修复**：`locateCenterByLocation` 增加 `fromBrowserGps`，首屏传入后对坐标做 `AMap.convertFrom(..., 'gps')` 再逆地理与回填 `center`。
+
+# 20260415 figma 地点搜索框默认清空
+
+1. **说明**：原 `searchKeyword` 初始值为「深圳湾公园」。
+2. **调整**：`PlansListPage` 改为 `useState('')`，首屏输入框无预填；自动定位或地图定位成功仍会照旧 `setSearchKeyword` 填当前地名。
+
+# 20260415 my-app 搜索联想提示恢复
+
+1. **AutoComplete 输入绑定加固**：`my-app/src/components/SearchBox.jsx` 将 `AMap.AutoComplete` 的 `input` 参数改为稳定的 DOM `id`（`amap-search-input`），避免直接传 DOM 引用在部分环境下不触发联想。
+2. **联想结果范围与类型明确**：补充 `citylimit: false` 与 `datatype: 'poi'`，提升跨城关键词的提示命中率与稳定性。
+3. **建议面板层级修复**：`my-app/src/App.css` 为 `.amap-sug-result` 增加 `z-index: 2001 !important`，避免建议列表被地图图层遮挡导致“看起来没有提示”。
+
+# 20260415 my-app 搜索框占位文案移除
+
+1. **默认文案调整**：`my-app/src/components/SearchBox.jsx` 将搜索输入框 `placeholder` 改为空字符串，刷新后不再显示“加载中...”或“搜索地点...”占位提示。
+
+# 20260415 my-app 地图点击改为单点模式
+
+1. **点击地图先清理覆盖物**：`my-app/src/components/AmapMap.jsx` 新增 `clearAllMapOverlays`，点击地图选点前会清除已有 marker、路线与地铁 route service，并重置当前焦点与路线选择状态。
+2. **地图点击仅保留当前点**：`displayLocation` 新增 `replaceExisting` 参数，`handleMapClick` 传入 `{ replaceExisting: true }`，实现“点击新点 -> 清空旧点 -> 居中并落新 marker”的单点展示行为。

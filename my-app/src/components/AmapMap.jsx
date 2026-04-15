@@ -383,6 +383,21 @@ export const AmapMap = forwardRef(function AmapMap({
     }
   }, [applyFocusStyles, clearTransitRouteService, removeEdge, removeNode])
 
+  const clearAllMapOverlays = useCallback(() => {
+    clearTransitRouteService()
+
+    const edgeIds = Array.from(edgesRef.current.keys())
+    edgeIds.forEach((edgeId) => removeEdge(edgeId))
+
+    const nodeIds = Array.from(nodesRef.current.keys())
+    nodeIds.forEach((nodeId) => removeNode(nodeId))
+
+    applyFocusStyles(null)
+    setSearchEndPoint(null)
+    setShowTravelMode(false)
+    setSelectedTravelMode('')
+  }, [applyFocusStyles, clearTransitRouteService, removeEdge, removeNode])
+
   const centerOnLocation = useCallback((location) => {
     const position = toAMapPosition(location)
 
@@ -392,10 +407,15 @@ export const AmapMap = forwardRef(function AmapMap({
     }
   }, [])
 
-  const displayLocation = useCallback((poi) => {
+  const displayLocation = useCallback((poi, options = {}) => {
+    const { replaceExisting = false } = options
     const normalizedLocation = normalizeLocation(poi?.location)
 
     if (!mapRef.current || !normalizedLocation || !window.AMap) return
+
+    if (replaceExisting) {
+      clearAllMapOverlays()
+    }
 
     const nodeId = makeLocationNodeId(normalizedLocation)
     if (!nodeId) return
@@ -427,7 +447,7 @@ export const AmapMap = forwardRef(function AmapMap({
     }
 
     applyFocusStyles(nodeId)
-  }, [applyFocusStyles, centerOnLocation, upsertNode])
+  }, [applyFocusStyles, centerOnLocation, clearAllMapOverlays, upsertNode])
 
   const showLocation = useCallback((locationData) => {
     const normalizedLocation = normalizeLocation(locationData?.location)
@@ -470,7 +490,7 @@ export const AmapMap = forwardRef(function AmapMap({
           displayLocation({
             ...locationData,
             type: '手动选择'
-          })
+          }, { replaceExisting: true })
         } else {
           console.error('逆地理编码失败', result)
         }

@@ -15,6 +15,7 @@ const TRAVEL_MODES = [
   { key: 'riding', label: '骑行' },
   { key: 'transit', label: '地铁' },
 ]
+const SEARCH_INPUT_ID = 'amap-search-input'
 
 export function SearchBox({ onSearchComplete, onTravelModeChange, showTravelMode: externalShowTravelMode, selectedTravelMode: externalSelectedTravelMode, onTravelModeSelect }) {
   const inputRef = useRef(null)
@@ -79,8 +80,10 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, showTravelMode
         })
 
         autoCompleteRef.current = new AMap.AutoComplete({
-          input: inputRef.current,
+          input: SEARCH_INPUT_ID,
           city: '全国',
+          citylimit: false,
+          datatype: 'poi',
         })
 
         autoCompleteRef.current.on('select', (e) => {
@@ -166,9 +169,10 @@ export function SearchBox({ onSearchComplete, onTravelModeChange, showTravelMode
   return (
     <div className="search-box">
       <input
+        id={SEARCH_INPUT_ID}
         ref={inputRef}
         type="text"
-        placeholder={ready ? '搜索地点...' : '加载中...'}
+        placeholder=""
         className="search-input"
         disabled={!ready}
       />
