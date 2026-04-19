@@ -5,6 +5,9 @@ figma/node_modules/
 figma/dist/
 figma/.DS_Store
 figma/*.log
+figma/server/logs/
+figma/server/**/*.log
+figma/server/**/*.db
 figma/.env
 figma/.env.local
 figma/.env.*.local

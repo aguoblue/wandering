@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sqlite3
 import time
@@ -29,6 +31,14 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL_NAME = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
 DB_PATH = os.environ.get("CHAT_DB_PATH", "./server/data/chat.db")
+LOG_DIR = os.environ.get("AI_SERVER_LOG_DIR", "./logs")
+LOG_LEVEL = os.environ.get("AI_SERVER_LOG_LEVEL", "INFO").upper()
+LOG_STREAM_CHUNKS = os.environ.get("AI_SERVER_LOG_STREAM_CHUNKS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 class ChatMessage(BaseModel):
@@ -65,6 +75,49 @@ def to_db_path() -> Path:
         return raw_path
     base_dir = Path(__file__).resolve().parent
     return (base_dir / raw_path).resolve()
+
+
+def to_log_dir() -> Path:
+    raw_path = Path(LOG_DIR)
+    if raw_path.is_absolute():
+        return raw_path
+    base_dir = Path(__file__).resolve().parent
+    return (base_dir / raw_path).resolve()
+
+
+def configure_logging() -> logging.Logger:
+    log_dir = to_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger("ai_server")
+    logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+    if logger.handlers:
+        return logger
+
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(
+        log_dir / "ai-server.log",
+        maxBytes=2 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+    return logger
+
+
+logger = configure_logging()
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -304,6 +357,13 @@ def stream_anthropic(system_prompt: str, messages: list[dict[str, str]]):
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    logger.info(
+        "startup complete | port=%s | db=%s | logs=%s | model=%s",
+        PORT,
+        to_db_path(),
+        to_log_dir() / "ai-server.log",
+        MODEL_NAME,
+    )
 
 
 @app.get("/api/health")
@@ -362,9 +422,18 @@ def delete_conversation(conversation_id: str) -> dict[str, Any]:
 def post_conversation_chat_stream(
     conversation_id: str, body: ConversationChatInput
 ) -> StreamingResponse:
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
     user_message = body.message.strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
+
+    started_at = time.perf_counter()
+    logger.info(
+        "conversation stream start | request_id=%s | conversation_id=%s | user_message=%s",
+        request_id,
+        conversation_id,
+        user_message,
+    )
 
     with get_db_connection() as connection:
         ensure_conversation_exists(connection, conversation_id)
@@ -388,8 +457,17 @@ def post_conversation_chat_stream(
         )
         model_messages = build_conversation_messages_for_model(connection, conversation_id)
 
+    logger.info(
+        "conversation stream model messages | request_id=%s | conversation_id=%s | count=%s | payload=%s",
+        request_id,
+        conversation_id,
+        len(model_messages),
+        json.dumps(model_messages, ensure_ascii=False),
+    )
+
     def event_stream():
         assistant_text = ""
+        chunk_count = 0
         try:
             client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
             with client.messages.stream(
@@ -402,7 +480,16 @@ def post_conversation_chat_stream(
                 for text in stream.text_stream:
                     if not text:
                         continue
+                    chunk_count += 1
                     assistant_text += text
+                    if LOG_STREAM_CHUNKS:
+                        logger.debug(
+                            "conversation stream chunk | request_id=%s | conversation_id=%s | chunk_index=%s | chunk_chars=%s",
+                            request_id,
+                            conversation_id,
+                            chunk_count,
+                            len(text),
+                        )
                     payload = json.dumps({"delta": text}, ensure_ascii=False)
                     yield f"data: {payload}\n\n"
 
@@ -413,6 +500,15 @@ def post_conversation_chat_stream(
                 )
                 refresh_conversation_stats(connection, conversation_id)
 
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "conversation stream done | request_id=%s | conversation_id=%s | chunks=%s | assistant_chars=%s | elapsed_ms=%s",
+                request_id,
+                conversation_id,
+                chunk_count,
+                len(assistant_text),
+                elapsed_ms,
+            )
             done_payload = json.dumps({"done": True, "model": MODEL_NAME}, ensure_ascii=False)
             yield f"data: {done_payload}\n\n"
         except Exception as error:  # pragma: no cover - network call
@@ -424,6 +520,15 @@ def post_conversation_chat_stream(
                 )
                 refresh_conversation_stats(connection, conversation_id)
 
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.exception(
+                "conversation stream failed | request_id=%s | conversation_id=%s | chunks=%s | partial_chars=%s | elapsed_ms=%s",
+                request_id,
+                conversation_id,
+                chunk_count,
+                len(assistant_text),
+                elapsed_ms,
+            )
             error_payload = json.dumps(
                 {"error": f"Anthropic stream failed: {error}"}, ensure_ascii=False
             )
@@ -442,8 +547,24 @@ def post_conversation_chat_stream(
 
 @app.post("/api/ai/chat")
 def post_chat(body: ChatInput) -> dict[str, Any]:
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
     messages = normalize_messages(body)
+    started_at = time.perf_counter()
+    logger.info(
+        "chat start | request_id=%s | messages=%s | last_role=%s | last_chars=%s",
+        request_id,
+        len(messages),
+        messages[-1]["role"],
+        len(messages[-1]["content"]),
+    )
     reply = request_anthropic(AI_CHAT_SYSTEM_PROMPT, messages)
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "chat done | request_id=%s | reply_chars=%s | elapsed_ms=%s",
+        request_id,
+        len(reply),
+        elapsed_ms,
+    )
     return {
         "reply": reply,
         "usage": {
@@ -454,10 +575,67 @@ def post_chat(body: ChatInput) -> dict[str, Any]:
 
 @app.post("/api/ai/chat/stream")
 def post_chat_stream(body: ChatInput) -> StreamingResponse:
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
     messages = normalize_messages(body)
-    stream = stream_anthropic(AI_CHAT_SYSTEM_PROMPT, messages)
+    started_at = time.perf_counter()
+    logger.info(
+        "chat stream start | request_id=%s | messages=%s | last_role=%s | last_chars=%s",
+        request_id,
+        len(messages),
+        messages[-1]["role"],
+        len(messages[-1]["content"]),
+    )
+
+    base_stream = stream_anthropic(AI_CHAT_SYSTEM_PROMPT, messages)
+
+    def logged_stream():
+        chunk_count = 0
+        reply_chars = 0
+        try:
+            for event in base_stream:
+                if '"delta"' in event:
+                    chunk_count += 1
+                    try:
+                        payload_text = event.removeprefix("data: ").strip()
+                        payload = json.loads(payload_text)
+                        delta = str(payload.get("delta", ""))
+                        reply_chars += len(delta)
+                        if LOG_STREAM_CHUNKS and delta:
+                            logger.debug(
+                                "chat stream chunk | request_id=%s | chunk_index=%s | chunk_chars=%s",
+                                request_id,
+                                chunk_count,
+                                len(delta),
+                            )
+                    except Exception:
+                        logger.debug(
+                            "chat stream chunk parse skipped | request_id=%s | chunk_index=%s",
+                            request_id,
+                            chunk_count,
+                        )
+                yield event
+
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "chat stream done | request_id=%s | chunks=%s | reply_chars=%s | elapsed_ms=%s",
+                request_id,
+                chunk_count,
+                reply_chars,
+                elapsed_ms,
+            )
+        except Exception:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.exception(
+                "chat stream failed | request_id=%s | chunks=%s | partial_chars=%s | elapsed_ms=%s",
+                request_id,
+                chunk_count,
+                reply_chars,
+                elapsed_ms,
+            )
+            raise
+
     return StreamingResponse(
-        stream,
+        logged_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

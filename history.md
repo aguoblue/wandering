@@ -1,3 +1,22 @@
+# 20260419 修正 figma server .db 被 gitignore 仍出现在 status
+
+1. **原因**：`figma/server/**/*.db` 规则本身有效，但 `chat.db` 曾被加入版本库时，忽略规则不会对已跟踪文件生效。
+2. **处理**：执行 `git rm --cached figma/server/server/data/chat.db`，从索引移除并保留本地文件；此后该路径被 `.gitignore` 正确忽略。
+
+# 20260419 figma AI 会话流式打印发给模型的 messages
+
+1. **`/api/conversations/{id}/chat/stream`**：在 `build_conversation_messages_for_model` 得到 `model_messages` 后增加 INFO 日志，输出条数与 `json.dumps` 完整 payload，对应下游 `client.messages.stream(..., messages=model_messages)`。
+
+# 20260419 figma AI 会话流式开始日志字段调整
+
+1. **`/api/conversations/{id}/chat/stream` 开始日志**：由仅记录 `user_chars`（`len(user_message)`）改为记录完整 `user_message` 正文，便于排查；需注意日志体量与敏感内容。
+
+# 20260419 figma AI 服务日志框架补齐
+
+1. **终端 + 文件双写日志**：`figma/server/ai_server.py` 新增基于 Python `logging` 的日志配置，启动后同时输出到终端和 `figma/server/server/logs/ai-server.log`。
+2. **流式请求打点**：为 `/api/ai/chat/stream` 和 `/api/conversations/{id}/chat/stream` 增加 `request_id`、开始/完成/失败、耗时、chunk 数、回复长度等日志。
+3. **可选 chunk 级调试**：支持通过环境变量 `AI_SERVER_LOG_STREAM_CHUNKS=true` 打开流式分片级别调试日志，默认关闭以避免日志过多。
+
 # 20260419 figma AI 对话改为 SQLite 持久化
 
 1. **后端接入数据库**：`figma/server/ai_server.py` 新增 SQLite 初始化与建表（`conversations`、`messages`），服务启动自动创建 `server/data/chat.db`。
