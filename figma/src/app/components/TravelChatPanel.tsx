@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, LoaderCircle, SendHorizonal, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -24,6 +24,13 @@ export function TravelChatPanel() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
   const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, isSending]);
 
   const handleSendMessage = async () => {
     const content = draft.trim();
@@ -87,7 +94,7 @@ export function TravelChatPanel() {
       </div>
 
       <div className="space-y-3 px-4 py-4">
-        <div className="max-h-[420px] space-y-3 overflow-auto pr-1">
+        <div ref={messagesContainerRef} className="max-h-[420px] space-y-3 overflow-auto pr-1">
           {messages.map((message) => {
             const isAssistant = message.role === 'assistant';
             return (
