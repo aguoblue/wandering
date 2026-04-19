@@ -15,6 +15,7 @@ import {
   type NearbyPoi
 } from '../services/amapDiscoveryClient';
 import { DiscoveryMapView } from '../components/DiscoveryMapView';
+import { TravelChatPanel } from '../components/TravelChatPanel';
 
 export function PlansListPage() {
   const [plans, setPlans] = useState(getAllPlans);
@@ -228,8 +229,10 @@ export function PlansListPage() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="mb-8 p-5 bg-white rounded-xl shadow-sm border space-y-4">
+      <div className="max-w-[1440px] mx-auto px-4 py-8">
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="space-y-8">
+        <div className="p-5 bg-white rounded-xl shadow-sm border space-y-4">
           <div className="flex items-center gap-2">
             <MapPin className="size-4 text-blue-600" />
             <h2 className="text-lg font-semibold">地点搜索与定位</h2>
@@ -410,7 +413,7 @@ export function PlansListPage() {
           )}
         </div>
 
-        <div className="flex gap-3 mb-8">
+        <div className="flex gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
             <Input
@@ -426,7 +429,7 @@ export function PlansListPage() {
           </Button>
         </div>
 
-        <div className="mb-8 p-4 bg-white rounded-lg shadow-sm border">
+        <div className="p-4 bg-white rounded-lg shadow-sm border">
           <div className="flex flex-col md:flex-row gap-3">
             <Input
               value={city}
@@ -464,7 +467,7 @@ export function PlansListPage() {
           ))}
         </motion.div>
 
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="text-center p-6 rounded-lg bg-white shadow-sm">
             <div className="text-3xl font-bold text-blue-600">{plans.length}</div>
             <div className="text-sm text-muted-foreground mt-1">精选计划</div>
@@ -483,6 +486,10 @@ export function PlansListPage() {
             </div>
             <div className="text-sm text-muted-foreground mt-1">个活动</div>
           </div>
+        </div>
+          </div>
+
+          <TravelChatPanel />
         </div>
       </div>
     </div>
