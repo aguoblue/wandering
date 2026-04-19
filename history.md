@@ -1,3 +1,9 @@
+# 20260419 figma AI 对话支持本地多会话历史（第一步）
+
+1. **本地会话存储层**：新增 `figma/src/app/data/chatStore.ts`，基于 `localStorage` 实现会话索引与消息分离存储（`index + conversation`），支持创建、切换、删除会话及消息持久化。
+2. **多会话列表 UI**：`figma/src/app/components/TravelChatPanel.tsx` 新增会话列表区与“新建会话”入口，支持会话切换、删除和按最近更新时间排序展示。
+3. **发送链路接入持久化**：流式回复结束后将当前会话消息写回本地，并自动更新会话标题（取首条用户消息）和消息条数，刷新页面后可恢复历史会话。
+
 # 20260415 figma 地图搜索与选点交互优化
 
 1. **搜索提示恢复**：在 `figma/src/app/services/amapDiscoveryClient.ts` 新增 `searchLocationSuggestions`，并在 `PlansListPage` 输入时联动显示下拉地点提示，可点击提示直接定位。
