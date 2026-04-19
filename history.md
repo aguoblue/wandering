@@ -1,3 +1,10 @@
+# 20260419 figma AI 对话改为 SQLite 持久化
+
+1. **后端接入数据库**：`figma/server/ai_server.py` 新增 SQLite 初始化与建表（`conversations`、`messages`），服务启动自动创建 `server/data/chat.db`。
+2. **会话管理接口**：新增 `GET/POST /api/conversations`、`GET /api/conversations/{id}/messages`、`DELETE /api/conversations/{id}`，支持多会话历史管理。
+3. **流式回复写库**：新增 `POST /api/conversations/{id}/chat/stream`，在流式输出时持久化 `user/assistant` 消息并更新会话标题、更新时间、消息数量。
+4. **前端改为数据库驱动**：`TravelChatPanel` 与 `chatClient` 改为调用数据库会话接口，不再依赖 `localStorage` 的会话存储。
+
 # 20260419 figma AI 对话支持本地多会话历史（第一步）
 
 1. **本地会话存储层**：新增 `figma/src/app/data/chatStore.ts`，基于 `localStorage` 实现会话索引与消息分离存储（`index + conversation`），支持创建、切换、删除会话及消息持久化。

@@ -4,18 +4,15 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
-import { sendChatMessageStream, type ChatTurn } from '../services/chatClient';
 import {
-  activateConversation,
-  createConversationAndActivate,
-  deleteConversationAndSelectNext,
-  ensureChatState,
-  saveConversationMessages,
-  type ChatConversationMeta,
-  type StoredChatMessage
-} from '../data/chatStore';
-
-type ChatMessage = StoredChatMessage;
+  createConversation,
+  deleteConversation,
+  getConversationMessages,
+  listConversations,
+  sendConversationMessageStream,
+  type ChatMessage,
+  type ConversationMeta
+} from '../services/chatClient';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -23,23 +20,6 @@ const WELCOME_MESSAGE: ChatMessage = {
   content: '你好，我会结合当前会话里的历史消息来回答你。',
   createdAt: 0
 };
-
-function toApiTurns(messages: ChatMessage[], currentUserInput: string): ChatTurn[] {
-  const history = messages
-    .map((item) => ({
-      role: item.role,
-      content: item.content.trim()
-    }))
-    .filter((item) => item.content.length > 0);
-
-  history.push({
-    role: 'user',
-    content: currentUserInput
-  });
-
-  // Keep recent turns to avoid oversized payloads.
-  return history.slice(-24);
-}
 
 function formatConversationTime(timestamp: number) {
   const date = new Date(timestamp);
@@ -65,20 +45,59 @@ function formatConversationTime(timestamp: number) {
 }
 
 export function TravelChatPanel() {
-  const [conversations, setConversations] = useState<ChatConversationMeta[]>([]);
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState('');
   const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const sendLockRef = useRef(false);
+
+  const refreshConversations = async (preferredConversationId?: string) => {
+    const list = await listConversations();
+    setConversations(list);
+    const nextActiveId =
+      preferredConversationId && list.some((item) => item.id === preferredConversationId)
+        ? preferredConversationId
+        : '';
+    if (!nextActiveId) {
+      setActiveConversationId('');
+      setMessages([]);
+      return;
+    }
+    const data = await getConversationMessages(nextActiveId);
+    setActiveConversationId(nextActiveId);
+    setMessages(data.messages);
+  };
 
   useEffect(() => {
-    const initialState = ensureChatState();
-    setConversations(initialState.conversations);
-    setActiveConversationId(initialState.activeConversationId);
-    setMessages(initialState.messages);
+    let isActive = true;
+    const init = async () => {
+      setIsLoadingConversations(true);
+      try {
+        const list = await listConversations();
+
+        if (!isActive) return;
+        setConversations(list);
+        setActiveConversationId('');
+        setMessages([]);
+      } catch (nextError) {
+        if (!isActive) return;
+        setError(nextError instanceof Error ? nextError.message : '加载会话失败');
+      } finally {
+        if (isActive) {
+          setIsLoadingConversations(false);
+        }
+      }
+    };
+
+    void init();
+    return () => {
+      isActive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -89,94 +108,109 @@ export function TravelChatPanel() {
 
   const visibleMessages = messages.length > 0 ? messages : [WELCOME_MESSAGE];
 
-  const handleCreateConversation = () => {
+  const handleCreateConversation = async () => {
     if (isSending) return;
-    const nextState = createConversationAndActivate();
-    setConversations(nextState.conversations);
-    setActiveConversationId(nextState.activeConversationId);
-    setMessages(nextState.messages);
+    setActiveConversationId('');
+    setMessages([]);
     setDraft('');
     setError('');
   };
 
-  const handleSwitchConversation = (conversationId: string) => {
+  const handleSwitchConversation = async (conversationId: string) => {
     if (isSending || conversationId === activeConversationId) return;
-    const nextState = activateConversation(conversationId);
-    setConversations(nextState.conversations);
-    setActiveConversationId(nextState.activeConversationId);
-    setMessages(nextState.messages);
-    setDraft('');
-    setError('');
+    try {
+      setError('');
+      const data = await getConversationMessages(conversationId);
+      setActiveConversationId(conversationId);
+      setMessages(data.messages);
+      setDraft('');
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '切换会话失败');
+    }
   };
 
-  const handleDeleteConversation = (conversationId: string) => {
+  const handleDeleteConversation = async (conversationId: string) => {
     if (isSending) return;
-    const nextState = deleteConversationAndSelectNext(conversationId);
-    setConversations(nextState.conversations);
-    setActiveConversationId(nextState.activeConversationId);
-    setMessages(nextState.messages);
-    setError('');
+    try {
+      setError('');
+      await deleteConversation(conversationId);
+      const fallbackId =
+        conversationId === activeConversationId
+          ? ''
+          : activeConversationId;
+      await refreshConversations(fallbackId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '删除会话失败');
+    }
   };
 
   const handleSendMessage = async () => {
     const content = draft.trim();
-    if (!content || isSending || !activeConversationId) return;
-    const conversationId = activeConversationId;
-    const apiTurns = toApiTurns(messages, content);
-    const now = Date.now();
+    if (!content || isSending || sendLockRef.current) return;
+    sendLockRef.current = true;
+    setIsSending(true);
+    setError('');
 
+    let conversationId = activeConversationId;
+    if (!conversationId) {
+      try {
+        const created = await createConversation();
+        conversationId = created.id;
+        setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+        setActiveConversationId(conversationId);
+        setMessages([]);
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : '创建会话失败');
+        setIsSending(false);
+        sendLockRef.current = false;
+        return;
+      }
+    }
+
+    const now = Date.now();
     const userMessage: ChatMessage = {
-      id: `user-${now}`,
+      id: `tmp-user-${now}`,
       role: 'user',
       content,
       createdAt: now
     };
 
-    setDraft('');
-    setIsSending(true);
-    setError('');
+    const assistantId = `tmp-assistant-${now + 1}`;
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      createdAt: now + 1
+    };
 
-    const assistantId = `assistant-${now + 1}`;
+    setDraft('');
     setStreamingAssistantId(assistantId);
-    setMessages((current) => {
-      const next = [
-        ...current,
-        userMessage,
-        {
-          id: assistantId,
-          role: 'assistant' as const,
-          content: '',
-          createdAt: now + 1
-        }
-      ];
-      return next;
-    });
+    setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
-      await sendChatMessageStream(apiTurns, (chunk) => {
+      await sendConversationMessageStream(conversationId, content, (chunk) => {
         setMessages((current) =>
-          current.map((message) =>
-            message.id === assistantId
+          current.map((item) =>
+            item.id === assistantId
               ? {
-                  ...message,
-                  content: message.content + chunk
+                  ...item,
+                  content: item.content + chunk
                 }
-              : message
+              : item
           )
         );
       });
+
+      await refreshConversations(conversationId);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '发送失败，请稍后再试');
+      setMessages((current) =>
+        current.filter((item) => item.id !== userMessage.id && item.id !== assistantId)
+      );
     } finally {
       setIsSending(false);
       setStreamingAssistantId(null);
-      setMessages((current) => {
-        const finalized = current.filter(
-          (message) => !(message.id === assistantId && !message.content.trim())
-        );
-        setConversations(saveConversationMessages(conversationId, finalized));
-        return finalized;
-      });
+      sendLockRef.current = false;
     }
   };
 
@@ -190,15 +224,15 @@ export function TravelChatPanel() {
             </div>
             <div>
               <h2 className="text-base font-semibold">AI 对话框</h2>
-              <p className="text-xs text-muted-foreground mt-1">支持会话内上下文；可创建多个本地会话历史。</p>
+              <p className="text-xs text-muted-foreground mt-1">会话历史已保存到数据库，可创建多个会话。</p>
             </div>
           </div>
           <Button
             type="button"
             size="sm"
             variant="outline"
-            onClick={handleCreateConversation}
-            disabled={isSending}
+            onClick={() => void handleCreateConversation()}
+            disabled={isSending || isLoadingConversations}
             className="gap-1.5 shrink-0"
           >
             <MessageSquarePlus className="size-4" />
@@ -219,8 +253,8 @@ export function TravelChatPanel() {
                 >
                   <button
                     type="button"
-                    onClick={() => handleSwitchConversation(conversation.id)}
-                    disabled={isSending}
+                    onClick={() => void handleSwitchConversation(conversation.id)}
+                    disabled={isSending || isLoadingConversations}
                     className="min-w-0 flex-1 text-left"
                   >
                     <p className="truncate text-sm font-medium text-slate-800">{conversation.title}</p>
@@ -232,9 +266,9 @@ export function TravelChatPanel() {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleDeleteConversation(conversation.id);
+                      void handleDeleteConversation(conversation.id);
                     }}
-                    disabled={isSending}
+                    disabled={isSending || isLoadingConversations}
                     className="inline-flex size-7 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-500"
                     aria-label="删除会话"
                   >
@@ -243,6 +277,9 @@ export function TravelChatPanel() {
                 </div>
               );
             })}
+            {conversations.length === 0 && (
+              <p className="px-2 py-3 text-xs text-muted-foreground">暂无会话，点击右上角新建。</p>
+            )}
           </div>
         </div>
       </div>
@@ -263,9 +300,7 @@ export function TravelChatPanel() {
                 )}
                 <div
                   className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 ${
-                    isAssistant
-                      ? 'bg-slate-100 text-slate-800'
-                      : 'bg-blue-600 text-white'
+                    isAssistant ? 'bg-slate-100 text-slate-800' : 'bg-blue-600 text-white'
                   }`}
                 >
                   {isAssistant && message.id === streamingAssistantId && !message.content ? (
@@ -331,7 +366,10 @@ export function TravelChatPanel() {
           />
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">支持 `Cmd/Ctrl + Enter` 快速发送</p>
-            <Button onClick={() => void handleSendMessage()} disabled={isSending || !draft.trim()}>
+            <Button
+              onClick={() => void handleSendMessage()}
+              disabled={isSending || isLoadingConversations || !draft.trim() || !activeConversationId}
+            >
               <SendHorizonal className="size-4" />
               发送
             </Button>

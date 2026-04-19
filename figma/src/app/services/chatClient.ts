@@ -1,13 +1,16 @@
-export interface ChatReply {
-  reply: string;
-  usage?: {
-    model?: string;
-  };
-}
-
-export interface ChatTurn {
+export interface ChatMessage {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
+  createdAt: number;
+}
+
+export interface ConversationMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
 }
 
 interface ChatStreamEvent {
@@ -17,46 +20,80 @@ interface ChatStreamEvent {
   error?: string;
 }
 
-export async function sendChatMessage(messages: ChatTurn[]) {
-  const response = await fetch('/api/ai/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ messages })
-  });
-
-  if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error || 'AI 对话失败');
-  }
-
-  const data = (await response.json()) as ChatReply;
-  if (!data?.reply || typeof data.reply !== 'string') {
-    throw new Error('AI 返回了空内容');
-  }
-
-  return data;
+function normalizeError(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const record = payload as { error?: string; detail?: string };
+  return record.error || record.detail || fallback;
 }
 
-export async function sendChatMessageStream(
-  messages: ChatTurn[],
+export async function listConversations() {
+  const response = await fetch('/api/conversations');
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(normalizeError(payload, '加载会话列表失败'));
+  }
+  const data = (await response.json()) as { conversations?: ConversationMeta[] };
+  return Array.isArray(data.conversations) ? data.conversations : [];
+}
+
+export async function createConversation() {
+  const response = await fetch('/api/conversations', {
+    method: 'POST'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(normalizeError(payload, '创建会话失败'));
+  }
+  const data = (await response.json()) as { conversation?: ConversationMeta };
+  if (!data.conversation) {
+    throw new Error('会话创建失败');
+  }
+  return data.conversation;
+}
+
+export async function deleteConversation(conversationId: string) {
+  const response = await fetch(`/api/conversations/${conversationId}`, {
+    method: 'DELETE'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(normalizeError(payload, '删除会话失败'));
+  }
+}
+
+export async function getConversationMessages(conversationId: string) {
+  const response = await fetch(`/api/conversations/${conversationId}/messages`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(normalizeError(payload, '加载会话消息失败'));
+  }
+  const data = (await response.json()) as {
+    conversation?: ConversationMeta;
+    messages?: ChatMessage[];
+  };
+  return {
+    conversation: data.conversation ?? null,
+    messages: Array.isArray(data.messages) ? data.messages : []
+  };
+}
+
+export async function sendConversationMessageStream(
+  conversationId: string,
+  message: string,
   onDelta: (chunk: string) => void
 ) {
-  const response = await fetch('/api/ai/chat/stream', {
+  const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream'
     },
-    body: JSON.stringify({ messages })
+    body: JSON.stringify({ message })
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { error?: string; detail?: string }
-      | null;
-    throw new Error(payload?.error || payload?.detail || 'AI 流式对话失败');
+    const payload = await response.json().catch(() => null);
+    throw new Error(normalizeError(payload, 'AI 流式对话失败'));
   }
 
   if (!response.body) {
@@ -76,9 +113,7 @@ export async function sendChatMessageStream(
     buffer = events.pop() ?? '';
 
     for (const rawEvent of events) {
-      const dataLine = rawEvent
-        .split('\n')
-        .find((line) => line.startsWith('data:'));
+      const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data:'));
       if (!dataLine) continue;
 
       const payloadText = dataLine.slice(5).trim();
