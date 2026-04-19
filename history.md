@@ -1,3 +1,36 @@
+# 20260420 figma 会话改为 AI 结构化抽取（意图+参数）两段式
+
+1. **第一段 JSON 抽取上线**：`figma/server/ai_server.py` 新增 `STRUCTURED_EXTRACTION_SYSTEM_PROMPT` 与 `extract_turn_structured_by_ai`，由模型先输出结构化结果（`intent/confidence/should_exit_plan_flow/slots_patch`）。
+2. **参数回填改为结构化补丁**：新增 `parse_first_json_object`、`sanitize_slots_patch`、`normalize_budget_range`，对模型 JSON 做严格清洗后再用于 `plan_draft` 合并，支持单值预算自动转 `¥X-X`。
+3. **状态机接入 AI 抽取结果**：`route_conversation_step3` 支持外部传入 `extracted_slots` 与 `should_exit_plan`；会话入口优先使用 AI 抽取，失败时回退规则识别，保证不中断。
+4. **可观测性增强**：新增 `conversation structured extraction` 日志，记录抽取来源、意图、置信度、槽位补丁和原始 JSON，便于排查“参数未回填”问题。
+
+# 20260420 figma 计划状态回复改为 AI 自然引导（流式）
+
+1. **状态识别后不再固定模板回复**：`figma/server/ai_server.py` 在命中 `route_conversation_step3` 后，改为将 `意图/状态流转/已收集槽位/缺失字段` 组装成上下文，交给模型生成自然回复并流式返回。
+2. **新增计划收集专用系统提示词**：新增 `PLAN_COLLECTION_SYSTEM_PROMPT`，强调“先回应用户当前问题，再顺势追问 1-2 个关键缺失项”，避免机械问表单。
+3. **保留规则兜底**：状态机仍负责 `state/plan_draft/pending_action` 的确定性更新；若模型流式失败且尚未产出文本，会回退到原规则回复，保证不中断。
+
+# 20260420 figma 计划流转可中断与关键词误判修复
+
+1. **支持中途切回普通聊天**：`figma/server/ai_server.py` 新增 `should_exit_plan_flow`，在 `collecting_plan_slots / awaiting_confirm_generate` 阶段识别“算了、先聊聊、不做计划了”等表达，意图判定为 `reject` 并回退到 `normal_chat`。
+2. **修复“聊天”误判为补槽位**：新增 `should_update_plan_slots`，把槽位识别改为正则模式（如“3天/两天/预算/风格”等），不再用单字 `天/日` 直接命中，避免“聊天”被误判为 `update_slots`。
+3. **状态机 reject 范围扩大**：`route_conversation_step3` 中 `reject` 由仅在 `awaiting_confirm_generate` 生效，扩展为在 `collecting_plan_slots` 也生效，回复文案改为“先切回普通聊天”。
+
+# 20260420 figma AI 日志按启动归档（分钟后缀）
+
+1. **启动归档旧日志**：`figma/server/ai_server.py` 在日志初始化时，若存在 `ai-server.log`，会先重命名为 `ai-server.log.YYYYMMDDHHMM`（示例：`ai-server.log.202604200955`），然后再创建新的 `ai-server.log`。
+2. **同分钟重启防覆盖**：若同一分钟内多次重启导致目标归档名重复，会自动追加序号（如 `.1`、`.2`）避免覆盖。
+3. **现有滚动策略保留**：归档后当前运行仍使用 `RotatingFileHandler` 的大小轮转（2MB，保留 5 份）。
+
+# 20260420 figma 对话状态机流转接入（第 3 步）
+
+1. **状态机分流生效**：`figma/server/ai_server.py` 在 `/api/conversations/{id}/chat/stream` 中接入 `route_conversation_step3`。命中生成计划相关意图时，不再直接走大模型回复，而是进入参数收集/确认态分支。
+2. **新增槽位处理**：新增 `extract_plan_slots_from_text`、`missing_plan_fields`、`build_slot_question` 等函数，支持从自然语言提取 `city/days/budgetRange/style/startDate`（含中文“`两天`”这类天数表达）。
+3. **状态持久化**：新增 `update_conversation_context`，在会话表中持久化 `state/plan_draft/pending_action`；当参数齐全时状态进入 `awaiting_confirm_generate` 并写入 `pending_action={type: generate_plan}`。
+4. **行为边界**：当前仍未执行真实计划生成，只实现“收集参数 -> 等待确认”流程；普通聊天路径保持原有模型流式回复。
+5. **意图匹配修正**：`detect_intent` 从单一短语匹配升级为“动词（生成/安排/制定/规划/做）+ 名词（计划/行程/攻略）”组合判断，并补充口语正则（如“帮我生成一个计划吧”），修复口语化表达误判为 `chat` 的问题。
+
 # 20260420 figma AI 意图识别接入（第 2 步）
 
 1. **新增意图识别函数**：`figma/server/ai_server.py` 新增 `detect_intent(message, conversation_state)`，输出 `chat / generate_plan / confirm / reject / update_slots` 五类意图；当前只基于关键词与会话状态做轻量判断。

@@ -4,9 +4,11 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import re
 import sqlite3
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,6 +28,25 @@ AI_CHAT_SYSTEM_PROMPT = """你是一个中文 AI 助手。
 3. 如果用户问题不明确，先基于常见合理理解给出回答，再简短指出可补充的信息。
 4. 你可以使用当前会话历史回答问题，不要编造不存在的历史。"""
 
+PLAN_COLLECTION_SYSTEM_PROMPT = """你是一个中文旅行助理，负责在“生成旅行计划”对话里自然推进沟通。
+
+要求：
+1. 先回应用户当前这句话本身，不要只重复表单问题。
+2. 若需要补充计划信息，请顺势追问最关键的 1-2 项，语气自然，不机械罗列。
+3. 用户若表达想先普通聊天或暂缓计划，要尊重并切换到聊天语气。
+4. 回答简洁、友好、直接，不要输出 Markdown 代码围栏。"""
+
+STRUCTURED_EXTRACTION_SYSTEM_PROMPT = """你是一个对话状态抽取器。你的任务是把用户输入转成结构化 JSON。
+
+必须遵守：
+1. 只输出 JSON 对象，不要输出任何其他文字。
+2. intent 只能是：chat, generate_plan, update_slots, confirm, reject。
+3. confidence 是 0 到 1 的数字。
+4. should_exit_plan_flow 是布尔值。
+5. slots_patch 只能包含：city, days, budgetRange, style, startDate。
+6. 未提到的字段不要猜测，不要填入 slots_patch。
+7. 日期必须输出为 YYYY-MM-DD。"""
+
 PORT = int(os.environ.get("AI_SERVER_PORT", "8787"))
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL_NAME = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
@@ -42,6 +63,8 @@ LOG_STREAM_CHUNKS = os.environ.get("AI_SERVER_LOG_STREAM_CHUNKS", "").lower() in
 DEFAULT_CONVERSATION_STATE = "normal_chat"
 DEFAULT_PLAN_DRAFT_JSON = "{}"
 DEFAULT_PENDING_ACTION_JSON = "{}"
+PLAN_REQUIRED_FIELDS = ("city", "days", "budgetRange", "style")
+ALLOWED_INTENTS: set[str] = {"chat", "generate_plan", "update_slots", "confirm", "reject"}
 
 
 class ChatMessage(BaseModel):
@@ -100,12 +123,24 @@ def to_log_dir() -> Path:
 def configure_logging() -> logging.Logger:
     log_dir = to_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "ai-server.log"
 
     logger = logging.getLogger("ai_server")
     logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
     if logger.handlers:
         return logger
+
+    if log_file.exists():
+        # Archive previous startup log so each run starts with a clean ai-server.log.
+        timestamp = datetime.now().strftime("%Y%m%d%H%M")
+        archived_log = log_file.with_name(f"{log_file.name}.{timestamp}")
+        candidate = archived_log
+        suffix_index = 1
+        while candidate.exists():
+            candidate = log_file.with_name(f"{archived_log.name}.{suffix_index}")
+            suffix_index += 1
+        log_file.rename(candidate)
 
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -116,7 +151,7 @@ def configure_logging() -> logging.Logger:
     console_handler.setFormatter(formatter)
 
     file_handler = RotatingFileHandler(
-        log_dir / "ai-server.log",
+        log_file,
         maxBytes=2 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
@@ -327,6 +362,199 @@ def normalize_messages(body: ChatInput) -> list[dict[str, str]]:
     return normalized[-24:]
 
 
+def parse_first_json_object(raw_text: str) -> dict[str, Any]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        raise ValueError("no json object found")
+
+    parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("json root must be object")
+    return parsed
+
+
+def normalize_budget_range(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+
+    if isinstance(raw_value, (int, float)):
+        amount = int(raw_value)
+        return f"¥{amount}-{amount}" if amount > 0 else None
+
+    value = str(raw_value).strip()
+    if not value:
+        return None
+
+    range_match = re.search(r"(\d{2,6})\s*[-~到至]\s*(\d{2,6})", value)
+    if range_match:
+        low = int(range_match.group(1))
+        high = int(range_match.group(2))
+        if low > high:
+            low, high = high, low
+        return f"¥{low}-{high}"
+
+    single_match = re.search(r"\d{2,6}", value)
+    if single_match:
+        amount = int(single_match.group(0))
+        return f"¥{amount}-{amount}"
+
+    return None
+
+
+def sanitize_slots_patch(raw_slots: Any) -> dict[str, Any]:
+    if not isinstance(raw_slots, dict):
+        return {}
+
+    sanitized: dict[str, Any] = {}
+
+    city = raw_slots.get("city")
+    if city is not None:
+        city_text = str(city).strip()
+        if city_text:
+            sanitized["city"] = city_text[:20]
+
+    days = raw_slots.get("days")
+    if days is not None:
+        try:
+            days_int = int(days)
+            if 1 <= days_int <= 15:
+                sanitized["days"] = days_int
+        except Exception:
+            pass
+
+    budget = normalize_budget_range(raw_slots.get("budgetRange"))
+    if budget:
+        sanitized["budgetRange"] = budget
+
+    style = raw_slots.get("style")
+    if style is not None:
+        style_text = str(style).strip()
+        if style_text:
+            sanitized["style"] = style_text[:80]
+
+    start_date = raw_slots.get("startDate")
+    if start_date is not None:
+        start_date_text = str(start_date).strip()
+        if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", start_date_text):
+            sanitized["startDate"] = start_date_text
+
+    return sanitized
+
+
+def extract_turn_structured_by_ai(
+    *,
+    user_message: str,
+    conversation_state: str,
+    current_plan_draft: dict[str, Any],
+) -> dict[str, Any]:
+    if not API_KEY:
+        raise ValueError("ANTHROPIC_API_KEY is missing")
+
+    today_text = datetime.now().strftime("%Y-%m-%d")
+    extraction_prompt = (
+        "请抽取本轮对话结构化结果。\n"
+        f"今天日期：{today_text}\n"
+        f"当前会话状态：{conversation_state}\n"
+        f"当前计划草稿：{json.dumps(current_plan_draft, ensure_ascii=False)}\n"
+        f"用户输入：{user_message}\n"
+        "日期解析要求：\n"
+        f"- “今天”映射为 {today_text}\n"
+        "- “明天”映射为今天+1天\n"
+        "- “后天”映射为今天+2天\n"
+        "返回 JSON schema：\n"
+        "{\n"
+        '  "intent": "chat|generate_plan|update_slots|confirm|reject",\n'
+        '  "confidence": 0.0,\n'
+        '  "should_exit_plan_flow": false,\n'
+        '  "slots_patch": {\n'
+        '    "city": "string?",\n'
+        '    "days": 0,\n'
+        '    "budgetRange": "¥1000-2000?",\n'
+        '    "style": "string?",\n'
+        '    "startDate": "YYYY-MM-DD?"\n'
+        "  }\n"
+        "}\n"
+        "只输出 JSON。"
+    )
+    raw_text = request_anthropic(
+        STRUCTURED_EXTRACTION_SYSTEM_PROMPT,
+        [{"role": "user", "content": extraction_prompt}],
+    )
+    payload = parse_first_json_object(raw_text)
+
+    intent_raw = str(payload.get("intent", "chat")).strip().lower()
+    intent = intent_raw if intent_raw in ALLOWED_INTENTS else "chat"
+
+    confidence_raw = payload.get("confidence", 0.0)
+    try:
+        confidence = float(confidence_raw)
+    except Exception:
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    should_exit_plan_flow = bool(payload.get("should_exit_plan_flow", False))
+    slots_patch = sanitize_slots_patch(payload.get("slots_patch"))
+
+    return {
+        "intent": intent,
+        "confidence": confidence,
+        "should_exit_plan_flow": should_exit_plan_flow,
+        "slots_patch": slots_patch,
+        "raw": payload,
+    }
+
+
+def should_exit_plan_flow(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    explicit_phrases = (
+        "还是想聊天",
+        "想聊天",
+        "先聊天",
+        "先聊聊",
+        "聊聊天",
+        "普通聊天",
+        "不做计划",
+        "不想做计划",
+        "不需要计划",
+        "不生成计划",
+        "先不做计划",
+        "先不生成",
+    )
+    if any(phrase in normalized for phrase in explicit_phrases):
+        return True
+
+    return bool(re.search(r"(算了|取消|不用|先不用|先别).{0,10}(计划|行程|攻略)?", normalized))
+
+
+def should_update_plan_slots(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    # Avoid noisy single-character matching like "天" in "聊天".
+    slot_patterns = [
+        r"\d{1,2}\s*(?:天|日)",
+        r"[一二两三四五六七八九十]\s*(?:天|日)",
+        r"(预算|城市|出发|开始日期|风格|偏好|节奏|人数|亲子|情侣|老人|美食|拍照|不爬山)",
+    ]
+    return any(re.search(pattern, normalized) for pattern in slot_patterns)
+
+
 def detect_intent(message: str, conversation_state: str = DEFAULT_CONVERSATION_STATE) -> IntentType:
     text = (message or "").strip().lower()
     if not text:
@@ -366,26 +594,17 @@ def detect_intent(message: str, conversation_state: str = DEFAULT_CONVERSATION_S
         "做个攻略",
         "制定行程",
     }
-    slot_keywords = {
-        "预算",
-        "天",
-        "日",
-        "城市",
-        "出发",
-        "开始日期",
-        "风格",
-        "偏好",
-        "节奏",
-        "人数",
-        "亲子",
-        "情侣",
-        "老人",
-        "美食",
-        "拍照",
-        "不爬山",
-    }
+    if conversation_state in {"collecting_plan_slots", "awaiting_confirm_generate"} and should_exit_plan_flow(
+        text
+    ):
+        return "reject"
 
-    if any(keyword in text for keyword in generate_keywords):
+    has_generate_verb = any(verb in text for verb in {"生成", "安排", "制定", "规划", "做"})
+    has_plan_noun = any(noun in text for noun in {"计划", "行程", "攻略"})
+    if any(keyword in text for keyword in generate_keywords) or (has_generate_verb and has_plan_noun):
+        return "generate_plan"
+
+    if re.search(r"(给我|帮我).{0,8}(一个|一份)?.{0,8}(计划|行程|攻略)", text):
         return "generate_plan"
 
     if text in confirm_keywords and conversation_state in {
@@ -397,12 +616,230 @@ def detect_intent(message: str, conversation_state: str = DEFAULT_CONVERSATION_S
     if text in reject_keywords:
         return "reject"
 
-    if conversation_state in {"collecting_plan_slots", "awaiting_confirm_generate"} and any(
-        keyword in text for keyword in slot_keywords
+    if conversation_state in {"collecting_plan_slots", "awaiting_confirm_generate"} and should_update_plan_slots(
+        text
     ):
         return "update_slots"
 
     return "chat"
+
+
+def extract_plan_slots_from_text(message: str) -> dict[str, Any]:
+    text = (message or "").strip()
+    if not text:
+        return {}
+
+    slots: dict[str, Any] = {}
+
+    day_match = re.search(r"(\d{1,2})\s*(?:天|日)", text)
+    if day_match:
+        days = int(day_match.group(1))
+        if 1 <= days <= 15:
+            slots["days"] = days
+    else:
+        cn_day_map = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        cn_day_match = re.search(r"([一二两三四五六七八九十])\s*(?:天|日)", text)
+        if cn_day_match:
+            mapped_days = cn_day_map.get(cn_day_match.group(1))
+            if mapped_days:
+                slots["days"] = mapped_days
+
+    budget_match = re.search(r"¥?\s*(\d{2,6})\s*[-~到至]\s*¥?\s*(\d{2,6})", text)
+    if budget_match:
+        low = int(budget_match.group(1))
+        high = int(budget_match.group(2))
+        if low > high:
+            low, high = high, low
+        slots["budgetRange"] = f"¥{low}-{high}"
+
+    city_candidates = [
+        "深圳",
+        "北京",
+        "上海",
+        "广州",
+        "杭州",
+        "成都",
+        "重庆",
+        "西安",
+        "南京",
+        "苏州",
+        "武汉",
+        "长沙",
+        "青岛",
+        "厦门",
+        "三亚",
+        "昆明",
+    ]
+    for candidate in city_candidates:
+        if candidate in text:
+            slots["city"] = candidate
+            break
+
+    date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", text)
+    if date_match:
+        slots["startDate"] = date_match.group(1)
+
+    style_keywords = [
+        "轻松节奏",
+        "城市漫游",
+        "美食",
+        "拍照",
+        "亲子",
+        "情侣",
+        "文化",
+        "自然",
+        "不爬山",
+    ]
+    matched_styles = [keyword for keyword in style_keywords if keyword in text]
+    if matched_styles:
+        slots["style"] = "、".join(matched_styles)
+
+    return slots
+
+
+def missing_plan_fields(plan_draft: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in PLAN_REQUIRED_FIELDS:
+        value = plan_draft.get(field)
+        if value is None:
+            missing.append(field)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(field)
+    return missing
+
+
+def summarize_plan_draft(plan_draft: dict[str, Any]) -> str:
+    city = str(plan_draft.get("city", "未设置"))
+    days = str(plan_draft.get("days", "未设置"))
+    budget = str(plan_draft.get("budgetRange", "未设置"))
+    style = str(plan_draft.get("style", "未设置"))
+    start_date = str(plan_draft.get("startDate", "未设置"))
+    return f"城市：{city}；天数：{days}天；预算：{budget}；偏好：{style}；开始日期：{start_date}"
+
+
+def build_slot_question(missing_fields: list[str], plan_draft: dict[str, Any]) -> str:
+    prompts = {
+        "city": "想去哪个城市？",
+        "days": "计划玩几天？",
+        "budgetRange": "预算区间大概是多少（例如 ¥1000-2000）？",
+        "style": "旅行偏好是什么（例如轻松、美食、拍照、亲子）？",
+    }
+    questions = [prompts[field] for field in missing_fields if field in prompts]
+    known = summarize_plan_draft(plan_draft)
+    if not questions:
+        return f"我先整理了你当前需求：{known}。还可以继续补充偏好。"
+    return f"我先整理了你当前需求：{known}。为了继续生成，请补充：{' '.join(questions)}"
+
+
+def build_plan_collection_messages(
+    *,
+    user_message: str,
+    previous_state: str,
+    next_state: str,
+    detected_intent: IntentType,
+    plan_draft: dict[str, Any],
+    pending_action: dict[str, Any],
+    fallback_reply: str,
+) -> list[dict[str, str]]:
+    missing_fields = missing_plan_fields(plan_draft)
+    missing_text = "、".join(missing_fields) if missing_fields else "无"
+    prompt = (
+        "请基于以下结构化上下文生成给用户的下一句回复。\n"
+        f"用户原话：{user_message}\n"
+        f"意图识别：{detected_intent}\n"
+        f"状态流转：{previous_state} -> {next_state}\n"
+        f"当前计划草稿：{json.dumps(plan_draft, ensure_ascii=False)}\n"
+        f"缺失字段：{missing_text}\n"
+        f"待执行动作：{json.dumps(pending_action, ensure_ascii=False)}\n"
+        f"规则兜底回复（可参考）：{fallback_reply}\n"
+        "请只输出最终给用户的话。"
+    )
+    return [{"role": "user", "content": prompt}]
+
+
+def update_conversation_context(
+    connection: sqlite3.Connection,
+    conversation_id: str,
+    state: str,
+    plan_draft: dict[str, Any],
+    pending_action: dict[str, Any],
+) -> None:
+    connection.execute(
+        """
+        UPDATE conversations
+        SET state = ?, plan_draft = ?, pending_action = ?
+        WHERE id = ?
+        """,
+        (
+            state,
+            json.dumps(plan_draft, ensure_ascii=False),
+            json.dumps(pending_action, ensure_ascii=False),
+            conversation_id,
+        ),
+    )
+
+
+def route_conversation_step3(
+    *,
+    user_message: str,
+    detected_intent: IntentType,
+    conversation_state: str,
+    current_plan_draft: dict[str, Any],
+    extracted_slots: dict[str, Any] | None = None,
+    should_exit_plan: bool = False,
+) -> tuple[bool, str, str, dict[str, Any], dict[str, Any]]:
+    effective_slots = extracted_slots if isinstance(extracted_slots, dict) else extract_plan_slots_from_text(user_message)
+    merged_draft = {**current_plan_draft, **effective_slots}
+
+    if (should_exit_plan or detected_intent == "reject") and conversation_state in {
+        "collecting_plan_slots",
+        "awaiting_confirm_generate",
+    }:
+        return (
+            True,
+            "好，我们先切回普通聊天。等你想继续做计划时，告诉我“生成计划”就行。",
+            DEFAULT_CONVERSATION_STATE,
+            merged_draft,
+            {},
+        )
+
+    should_collect_or_confirm = detected_intent in {"generate_plan", "update_slots"} or (
+        conversation_state in {"collecting_plan_slots", "awaiting_confirm_generate"}
+        and bool(effective_slots)
+    )
+    if not should_collect_or_confirm:
+        return (False, "", conversation_state, current_plan_draft, {})
+
+    missing_fields = missing_plan_fields(merged_draft)
+    if missing_fields:
+        return (
+            True,
+            build_slot_question(missing_fields, merged_draft),
+            "collecting_plan_slots",
+            merged_draft,
+            {},
+        )
+
+    return (
+        True,
+        f"我已经整理好你的计划需求：{summarize_plan_draft(merged_draft)}。如果确认生成，请回复“好”或“生成吧”。",
+        "awaiting_confirm_generate",
+        merged_draft,
+        {"type": "generate_plan", "createdAt": now_ms()},
+    )
 
 
 def build_conversation_messages_for_model(
@@ -578,6 +1015,11 @@ def post_conversation_chat_stream(
         user_message,
     )
 
+    direct_reply: str | None = None
+    state_fallback_reply: str | None = None
+    use_plan_collection_model = False
+    model_messages: list[dict[str, str]] = []
+
     with get_db_connection() as connection:
         conversation_row = ensure_conversation_exists(connection, conversation_id)
         conversation_state = (
@@ -585,13 +1027,69 @@ def post_conversation_chat_stream(
             if "state" in conversation_row.keys() and conversation_row["state"]
             else DEFAULT_CONVERSATION_STATE
         )
-        detected_intent = detect_intent(user_message, conversation_state)
+        current_plan_draft = parse_json_or_default(
+            conversation_row["plan_draft"] if "plan_draft" in conversation_row.keys() else "{}",
+            {},
+        )
+        detected_intent: IntentType = "chat"
+        structured_slots_patch: dict[str, Any] = {}
+        should_exit_plan = False
+        extraction_source = "rule"
+        if API_KEY:
+            try:
+                structured = extract_turn_structured_by_ai(
+                    user_message=user_message,
+                    conversation_state=conversation_state,
+                    current_plan_draft=current_plan_draft if isinstance(current_plan_draft, dict) else {},
+                )
+                structured_intent = str(structured.get("intent", "chat"))
+                detected_intent = (
+                    structured_intent
+                    if structured_intent in ALLOWED_INTENTS
+                    else "chat"
+                )  # type: ignore[assignment]
+                structured_slots_patch = (
+                    structured.get("slots_patch")
+                    if isinstance(structured.get("slots_patch"), dict)
+                    else {}
+                )
+                if not structured_slots_patch:
+                    structured_slots_patch = extract_plan_slots_from_text(user_message)
+                should_exit_plan = bool(structured.get("should_exit_plan_flow", False))
+                extraction_source = "ai"
+                logger.info(
+                    "conversation structured extraction | request_id=%s | conversation_id=%s | source=%s | intent=%s | confidence=%s | should_exit=%s | slots_patch=%s | raw=%s",
+                    request_id,
+                    conversation_id,
+                    extraction_source,
+                    detected_intent,
+                    structured.get("confidence", 0.0),
+                    should_exit_plan,
+                    json.dumps(structured_slots_patch, ensure_ascii=False),
+                    json.dumps(structured.get("raw", {}), ensure_ascii=False),
+                )
+            except Exception as error:
+                logger.exception(
+                    "conversation structured extraction failed | request_id=%s | conversation_id=%s | error=%s",
+                    request_id,
+                    conversation_id,
+                    error,
+                )
+
+        if extraction_source != "ai":
+            detected_intent = detect_intent(user_message, conversation_state)
+            structured_slots_patch = extract_plan_slots_from_text(user_message)
+            should_exit_plan = should_exit_plan_flow(user_message)
+
         logger.info(
-            "conversation stream intent | request_id=%s | conversation_id=%s | state=%s | intent=%s",
+            "conversation stream intent | request_id=%s | conversation_id=%s | state=%s | intent=%s | source=%s | slots_patch=%s | should_exit=%s",
             request_id,
             conversation_id,
             conversation_state,
             detected_intent,
+            extraction_source,
+            json.dumps(structured_slots_patch, ensure_ascii=False),
+            should_exit_plan,
         )
         base_time = now_ms()
         user_message_id = f"msg_{uuid.uuid4().hex}"
@@ -611,26 +1109,100 @@ def post_conversation_chat_stream(
             """,
             (assistant_message_id, conversation_id, base_time + 1),
         )
-        model_messages = build_conversation_messages_for_model(connection, conversation_id)
+        (
+            is_state_handled,
+            route_reply,
+            next_state,
+            next_plan_draft,
+            next_pending_action,
+        ) = route_conversation_step3(
+            user_message=user_message,
+            detected_intent=detected_intent,
+            conversation_state=conversation_state,
+            current_plan_draft=current_plan_draft if isinstance(current_plan_draft, dict) else {},
+            extracted_slots=structured_slots_patch,
+            should_exit_plan=should_exit_plan,
+        )
 
-    logger.info(
-        "conversation stream model messages | request_id=%s | conversation_id=%s | count=%s | payload=%s",
-        request_id,
-        conversation_id,
-        len(model_messages),
-        json.dumps(model_messages, ensure_ascii=False),
-    )
+        if is_state_handled:
+            state_fallback_reply = route_reply
+            update_conversation_context(
+                connection=connection,
+                conversation_id=conversation_id,
+                state=next_state,
+                plan_draft=next_plan_draft,
+                pending_action=next_pending_action,
+            )
+            logger.info(
+                "conversation state transition | request_id=%s | conversation_id=%s | from=%s | to=%s | plan_draft=%s | pending_action=%s",
+                request_id,
+                conversation_id,
+                conversation_state,
+                next_state,
+                json.dumps(next_plan_draft, ensure_ascii=False),
+                json.dumps(next_pending_action, ensure_ascii=False),
+            )
+            if API_KEY:
+                use_plan_collection_model = True
+                model_messages = build_plan_collection_messages(
+                    user_message=user_message,
+                    previous_state=conversation_state,
+                    next_state=next_state,
+                    detected_intent=detected_intent,
+                    plan_draft=next_plan_draft,
+                    pending_action=next_pending_action,
+                    fallback_reply=route_reply,
+                )
+            else:
+                direct_reply = route_reply
+        else:
+            model_messages = build_conversation_messages_for_model(connection, conversation_id)
+
+    if not direct_reply:
+        logger.info(
+            "conversation stream model messages | request_id=%s | conversation_id=%s | count=%s | payload=%s",
+            request_id,
+            conversation_id,
+            len(model_messages),
+            json.dumps(model_messages, ensure_ascii=False),
+        )
 
     def event_stream():
         assistant_text = ""
         chunk_count = 0
         try:
+            if direct_reply is not None:
+                assistant_text = direct_reply
+                chunk_count = 1
+                payload = json.dumps({"delta": direct_reply}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+                with get_db_connection() as connection:
+                    connection.execute(
+                        "UPDATE messages SET content = ? WHERE id = ?",
+                        (assistant_text, assistant_message_id),
+                    )
+                    refresh_conversation_stats(connection, conversation_id)
+
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.info(
+                    "conversation stream done (state) | request_id=%s | conversation_id=%s | chunks=%s | assistant_chars=%s | elapsed_ms=%s",
+                    request_id,
+                    conversation_id,
+                    chunk_count,
+                    len(assistant_text),
+                    elapsed_ms,
+                )
+                done_payload = json.dumps({"done": True, "model": "state-router"}, ensure_ascii=False)
+                yield f"data: {done_payload}\n\n"
+                return
+
             client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
+            system_prompt = PLAN_COLLECTION_SYSTEM_PROMPT if use_plan_collection_model else AI_CHAT_SYSTEM_PROMPT
             with client.messages.stream(
                 model=MODEL_NAME,
                 max_tokens=2600,
                 temperature=0,
-                system=AI_CHAT_SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=model_messages,
             ) as stream:
                 for text in stream.text_stream:
@@ -685,6 +1257,18 @@ def post_conversation_chat_stream(
                 len(assistant_text),
                 elapsed_ms,
             )
+            if use_plan_collection_model and not assistant_text and state_fallback_reply:
+                with get_db_connection() as connection:
+                    connection.execute(
+                        "UPDATE messages SET content = ? WHERE id = ?",
+                        (state_fallback_reply, assistant_message_id),
+                    )
+                    refresh_conversation_stats(connection, conversation_id)
+                fallback_payload = json.dumps({"delta": state_fallback_reply}, ensure_ascii=False)
+                yield f"data: {fallback_payload}\n\n"
+                done_payload = json.dumps({"done": True, "model": "state-router-fallback"}, ensure_ascii=False)
+                yield f"data: {done_payload}\n\n"
+                return
             error_payload = json.dumps(
                 {"error": f"Anthropic stream failed: {error}"}, ensure_ascii=False
             )
