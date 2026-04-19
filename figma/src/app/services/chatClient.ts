@@ -1,3 +1,5 @@
+import type { TravelPlan } from '../data/mockPlans';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -13,8 +15,13 @@ export interface ConversationMeta {
   messageCount: number;
 }
 
+export type StreamPlanPayload = TravelPlan;
+
 interface ChatStreamEvent {
+  type?: 'delta' | 'plan' | 'done' | 'error';
   delta?: string;
+  plan?: StreamPlanPayload;
+  assistantMessage?: string;
   done?: boolean;
   model?: string;
   error?: string;
@@ -80,7 +87,8 @@ export async function getConversationMessages(conversationId: string) {
 export async function sendConversationMessageStream(
   conversationId: string,
   message: string,
-  onDelta: (chunk: string) => void
+  onDelta: (chunk: string) => void,
+  onPlan?: (plan: StreamPlanPayload, assistantMessage?: string) => void
 ) {
   const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: 'POST',
@@ -130,10 +138,13 @@ export async function sendConversationMessageStream(
       if (payload.error) {
         throw new Error(payload.error);
       }
+      if (payload.type === 'plan' && payload.plan && onPlan) {
+        onPlan(payload.plan, payload.assistantMessage);
+      }
       if (typeof payload.delta === 'string' && payload.delta) {
         onDelta(payload.delta);
       }
-      if (payload.done) {
+      if (payload.done || payload.type === 'done') {
         return {
           usage: {
             model: payload.model

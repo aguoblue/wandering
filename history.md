@@ -23,6 +23,14 @@
 2. **同分钟重启防覆盖**：若同一分钟内多次重启导致目标归档名重复，会自动追加序号（如 `.1`、`.2`）避免覆盖。
 3. **现有滚动策略保留**：归档后当前运行仍使用 `RotatingFileHandler` 的大小轮转（2MB，保留 5 份）。
 
+# 20260420 figma 对话流接入真实计划生成与 plan 事件
+
+1. **后端接入真实计划生成**：`figma/server/ai_server.py` 新增 `AI_PLAN_SYSTEM_PROMPT`、`generate_plan_from_draft` 等函数，在会话处于 `awaiting_confirm_generate` 且用户 `confirm` 时，按 `plan_draft` 实际调用模型生成 `TravelPlan`。
+2. **SSE 协议扩展**：`/api/conversations/{id}/chat/stream` 新增 `type=plan` 事件，事件中同时返回 `plan` 与 `assistantMessage`；并统一补充 `type=delta/done/error` 字段（保留原有 `delta/done/error` 兼容解析）。
+3. **前端消费 plan 事件**：`figma/src/app/services/chatClient.ts` 新增 `onPlan` 回调；`TravelChatPanel` 收到 `plan` 后会调用 `upsertGeneratedPlan` 入库，并把 `assistantMessage` 写入当前助手气泡。
+4. **列表页联动刷新**：`figma/src/app/pages/PlansListPage.tsx` 给 `TravelChatPanel` 传入 `onPlanGenerated`，计划生成后立即刷新列表展示。
+5. **移除旧生成入口**：删除 `PlansListPage` 中“AI 生成一条计划”按钮及对应 `generatePlanWithAi` 前端调用逻辑，统一只保留“对话触发生成计划”这一条路径。
+
 # 20260420 figma 对话状态机流转接入（第 3 步）
 
 1. **状态机分流生效**：`figma/server/ai_server.py` 在 `/api/conversations/{id}/chat/stream` 中接入 `route_conversation_step3`。命中生成计划相关意图时，不再直接走大模型回复，而是进入参数收集/确认态分支。

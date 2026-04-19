@@ -10,9 +10,11 @@ import {
   getConversationMessages,
   listConversations,
   sendConversationMessageStream,
+  type StreamPlanPayload,
   type ChatMessage,
   type ConversationMeta
 } from '../services/chatClient';
+import { upsertGeneratedPlan } from '../data/plansStore';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -44,7 +46,11 @@ function formatConversationTime(timestamp: number) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-export function TravelChatPanel() {
+interface TravelChatPanelProps {
+  onPlanGenerated?: () => void;
+}
+
+export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [draft, setDraft] = useState('');
@@ -188,18 +194,37 @@ export function TravelChatPanel() {
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
-      await sendConversationMessageStream(conversationId, content, (chunk) => {
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === assistantId
-              ? {
-                  ...item,
-                  content: item.content + chunk
-                }
-              : item
-          )
-        );
-      });
+      await sendConversationMessageStream(
+        conversationId,
+        content,
+        (chunk) => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantId
+                ? {
+                    ...item,
+                    content: item.content + chunk
+                  }
+                : item
+            )
+          );
+        },
+        (plan: StreamPlanPayload, assistantMessage?: string) => {
+          upsertGeneratedPlan(plan);
+          onPlanGenerated?.();
+          if (!assistantMessage) return;
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantId
+                ? {
+                    ...item,
+                    content: assistantMessage
+                  }
+                : item
+            )
+          );
+        }
+      );
 
       await refreshConversations(conversationId);
     } catch (nextError) {

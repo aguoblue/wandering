@@ -28,6 +28,45 @@ AI_CHAT_SYSTEM_PROMPT = """你是一个中文 AI 助手。
 3. 如果用户问题不明确，先基于常见合理理解给出回答，再简短指出可补充的信息。
 4. 你可以使用当前会话历史回答问题，不要编造不存在的历史。"""
 
+AI_PLAN_SYSTEM_PROMPT = """你是一个“旅行数据生成器”，只负责生成可直接用于前端渲染的结构化数据。
+
+目标文件结构（必须严格匹配）：
+- 顶层是 TravelPlan[] 数组
+- 每个 plan 字段：
+  id: string
+  name: string
+  tags: string[]
+  duration: string
+  highlight: string
+  walkingIntensity: string
+  budget: string
+  image: string
+  days: Day[]
+  destination: string
+
+- Day 字段：
+  day: number
+  date: string (YYYY-MM-DD)
+  activities: Activity[]
+
+- Activity 字段：
+  id: string
+  time: string (HH:mm-HH:mm)
+  period: string（只能是：上午 / 中午 / 下午 / 晚上）
+  title: string
+  description: string
+  reason: string
+  duration: string
+  transport: string
+  alternatives: string[]
+  coordinates: [number, number]
+
+关键约束（必须满足）：
+1. 只输出 JSON 数组：以 "[" 开始，以 "]" 结束；不要输出 Markdown，不要解释，不要代码围栏。
+2. 必须是合法 JSON。
+3. coordinates 顺序必须是 [纬度, 经度]。
+4. 文案必须是中文。"""
+
 PLAN_COLLECTION_SYSTEM_PROMPT = """你是一个中文旅行助理，负责在“生成旅行计划”对话里自然推进沟通。
 
 要求：
@@ -383,6 +422,93 @@ def parse_first_json_object(raw_text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("json root must be object")
     return parsed
+
+
+def parse_first_json_array(raw_text: str) -> list[Any]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        pass
+
+    match = re.search(r"\[[\s\S]*\]", text)
+    if not match:
+        raise ValueError("no json array found")
+    parsed = json.loads(match.group(0))
+    if not isinstance(parsed, list):
+        raise ValueError("json root must be array")
+    return parsed
+
+
+def build_plan_generation_user_prompt(plan_draft: dict[str, Any]) -> str:
+    city = str(plan_draft.get("city", "深圳")).strip() or "深圳"
+    days_raw = plan_draft.get("days", 2)
+    try:
+        days = int(days_raw)
+    except Exception:
+        days = 2
+    if days < 1:
+        days = 1
+    if days > 7:
+        days = 7
+    budget_range = str(plan_draft.get("budgetRange", "¥800-1800")).strip() or "¥800-1800"
+    style = str(plan_draft.get("style", "城市漫游、美食、轻松节奏")).strip() or "城市漫游、美食、轻松节奏"
+    start_date = str(plan_draft.get("startDate", "")).strip()
+    if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", start_date):
+        start_date = datetime.now().strftime("%Y-%m-%d")
+
+    return (
+        "请按既定 schema 生成 1 条 TravelPlan 数据。\n\n"
+        "要求：\n"
+        f"- 城市范围：{city}\n"
+        f"- 每条 plan 天数：{days}天\n"
+        "- 每天活动数：4个\n"
+        f"- 风格偏好：{style}\n"
+        f"- 预算区间：{budget_range}\n"
+        f"- 开始日期：{start_date}\n"
+        "- 语言：中文简体\n"
+        "- 输出：仅 JSON 数组，不要任何解释文本\n\n"
+        "额外要求：\n"
+        "- destination 必须与 plan 内容城市一致\n"
+        "- name 要有吸引力且不重复\n"
+        "- highlight 一句话概括卖点\n"
+        "- 避免生成重复 POI 组合"
+    )
+
+
+def validate_generated_plan(plan: Any) -> dict[str, Any]:
+    if not isinstance(plan, dict):
+        raise ValueError("invalid plan object")
+    required = ["id", "name", "days", "destination", "budget", "walkingIntensity", "highlight", "image", "tags"]
+    for field in required:
+        if field not in plan:
+            raise ValueError(f"plan missing field: {field}")
+    if not isinstance(plan.get("days"), list) or not plan["days"]:
+        raise ValueError("plan days is empty")
+    return plan
+
+
+def generate_plan_from_draft(plan_draft: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    prompt = build_plan_generation_user_prompt(plan_draft)
+    raw_text = request_anthropic(
+        AI_PLAN_SYSTEM_PROMPT,
+        [{"role": "user", "content": prompt}],
+    )
+    plan_array = parse_first_json_array(raw_text)
+    if not plan_array:
+        raise ValueError("empty plan array")
+    first_plan = validate_generated_plan(plan_array[0])
+    assistant_message = (
+        f"已为你生成计划：{first_plan.get('name', '新计划')}。"
+        f"目的地 {first_plan.get('destination', '')}，共 {len(first_plan.get('days', []))} 天，已加入计划列表。"
+    )
+    return first_plan, assistant_message
 
 
 def normalize_budget_range(raw_value: Any) -> str | None:
@@ -1019,6 +1145,8 @@ def post_conversation_chat_stream(
     state_fallback_reply: str | None = None
     use_plan_collection_model = False
     model_messages: list[dict[str, str]] = []
+    generated_plan_payload: dict[str, Any] | None = None
+    generated_plan_assistant_message: str | None = None
 
     with get_db_connection() as connection:
         conversation_row = ensure_conversation_exists(connection, conversation_id)
@@ -1029,6 +1157,10 @@ def post_conversation_chat_stream(
         )
         current_plan_draft = parse_json_or_default(
             conversation_row["plan_draft"] if "plan_draft" in conversation_row.keys() else "{}",
+            {},
+        )
+        current_pending_action = parse_json_or_default(
+            conversation_row["pending_action"] if "pending_action" in conversation_row.keys() else "{}",
             {},
         )
         detected_intent: IntentType = "chat"
@@ -1109,54 +1241,89 @@ def post_conversation_chat_stream(
             """,
             (assistant_message_id, conversation_id, base_time + 1),
         )
-        (
-            is_state_handled,
-            route_reply,
-            next_state,
-            next_plan_draft,
-            next_pending_action,
-        ) = route_conversation_step3(
-            user_message=user_message,
-            detected_intent=detected_intent,
-            conversation_state=conversation_state,
-            current_plan_draft=current_plan_draft if isinstance(current_plan_draft, dict) else {},
-            extracted_slots=structured_slots_patch,
-            should_exit_plan=should_exit_plan,
+        should_generate_now = (
+            detected_intent == "confirm"
+            and conversation_state == "awaiting_confirm_generate"
+            and isinstance(current_pending_action, dict)
+            and str(current_pending_action.get("type", "")) == "generate_plan"
         )
 
-        if is_state_handled:
-            state_fallback_reply = route_reply
-            update_conversation_context(
-                connection=connection,
-                conversation_id=conversation_id,
-                state=next_state,
-                plan_draft=next_plan_draft,
-                pending_action=next_pending_action,
-            )
-            logger.info(
-                "conversation state transition | request_id=%s | conversation_id=%s | from=%s | to=%s | plan_draft=%s | pending_action=%s",
-                request_id,
-                conversation_id,
-                conversation_state,
+        if should_generate_now:
+            try:
+                generated_plan_payload, generated_plan_assistant_message = generate_plan_from_draft(
+                    current_plan_draft if isinstance(current_plan_draft, dict) else {}
+                )
+                update_conversation_context(
+                    connection=connection,
+                    conversation_id=conversation_id,
+                    state=DEFAULT_CONVERSATION_STATE,
+                    plan_draft=current_plan_draft if isinstance(current_plan_draft, dict) else {},
+                    pending_action={},
+                )
+                logger.info(
+                    "conversation generate plan success | request_id=%s | conversation_id=%s | plan_id=%s | plan_name=%s",
+                    request_id,
+                    conversation_id,
+                    str(generated_plan_payload.get("id", "")),
+                    str(generated_plan_payload.get("name", "")),
+                )
+            except Exception as error:
+                logger.exception(
+                    "conversation generate plan failed | request_id=%s | conversation_id=%s | error=%s",
+                    request_id,
+                    conversation_id,
+                    error,
+                )
+                direct_reply = "我尝试生成计划时失败了。你可以补充一下偏好后再让我重试。"
+        else:
+            (
+                is_state_handled,
+                route_reply,
                 next_state,
-                json.dumps(next_plan_draft, ensure_ascii=False),
-                json.dumps(next_pending_action, ensure_ascii=False),
+                next_plan_draft,
+                next_pending_action,
+            ) = route_conversation_step3(
+                user_message=user_message,
+                detected_intent=detected_intent,
+                conversation_state=conversation_state,
+                current_plan_draft=current_plan_draft if isinstance(current_plan_draft, dict) else {},
+                extracted_slots=structured_slots_patch,
+                should_exit_plan=should_exit_plan,
             )
-            if API_KEY:
-                use_plan_collection_model = True
-                model_messages = build_plan_collection_messages(
-                    user_message=user_message,
-                    previous_state=conversation_state,
-                    next_state=next_state,
-                    detected_intent=detected_intent,
+
+            if is_state_handled:
+                state_fallback_reply = route_reply
+                update_conversation_context(
+                    connection=connection,
+                    conversation_id=conversation_id,
+                    state=next_state,
                     plan_draft=next_plan_draft,
                     pending_action=next_pending_action,
-                    fallback_reply=route_reply,
                 )
+                logger.info(
+                    "conversation state transition | request_id=%s | conversation_id=%s | from=%s | to=%s | plan_draft=%s | pending_action=%s",
+                    request_id,
+                    conversation_id,
+                    conversation_state,
+                    next_state,
+                    json.dumps(next_plan_draft, ensure_ascii=False),
+                    json.dumps(next_pending_action, ensure_ascii=False),
+                )
+                if API_KEY:
+                    use_plan_collection_model = True
+                    model_messages = build_plan_collection_messages(
+                        user_message=user_message,
+                        previous_state=conversation_state,
+                        next_state=next_state,
+                        detected_intent=detected_intent,
+                        plan_draft=next_plan_draft,
+                        pending_action=next_pending_action,
+                        fallback_reply=route_reply,
+                    )
+                else:
+                    direct_reply = route_reply
             else:
-                direct_reply = route_reply
-        else:
-            model_messages = build_conversation_messages_for_model(connection, conversation_id)
+                model_messages = build_conversation_messages_for_model(connection, conversation_id)
 
     if not direct_reply:
         logger.info(
@@ -1171,10 +1338,41 @@ def post_conversation_chat_stream(
         assistant_text = ""
         chunk_count = 0
         try:
+            if generated_plan_payload is not None:
+                assistant_text = generated_plan_assistant_message or "已为你生成计划并加入列表。"
+                plan_payload = json.dumps(
+                    {
+                        "type": "plan",
+                        "plan": generated_plan_payload,
+                        "assistantMessage": assistant_text,
+                        "model": MODEL_NAME,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"data: {plan_payload}\n\n"
+                with get_db_connection() as connection:
+                    connection.execute(
+                        "UPDATE messages SET content = ? WHERE id = ?",
+                        (assistant_text, assistant_message_id),
+                    )
+                    refresh_conversation_stats(connection, conversation_id)
+
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.info(
+                    "conversation stream done (plan) | request_id=%s | conversation_id=%s | assistant_chars=%s | elapsed_ms=%s",
+                    request_id,
+                    conversation_id,
+                    len(assistant_text),
+                    elapsed_ms,
+                )
+                done_payload = json.dumps({"type": "done", "done": True, "model": MODEL_NAME}, ensure_ascii=False)
+                yield f"data: {done_payload}\n\n"
+                return
+
             if direct_reply is not None:
                 assistant_text = direct_reply
                 chunk_count = 1
-                payload = json.dumps({"delta": direct_reply}, ensure_ascii=False)
+                payload = json.dumps({"type": "delta", "delta": direct_reply}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
                 with get_db_connection() as connection:
                     connection.execute(
@@ -1192,7 +1390,7 @@ def post_conversation_chat_stream(
                     len(assistant_text),
                     elapsed_ms,
                 )
-                done_payload = json.dumps({"done": True, "model": "state-router"}, ensure_ascii=False)
+                done_payload = json.dumps({"type": "done", "done": True, "model": "state-router"}, ensure_ascii=False)
                 yield f"data: {done_payload}\n\n"
                 return
 
@@ -1218,7 +1416,7 @@ def post_conversation_chat_stream(
                             chunk_count,
                             len(text),
                         )
-                    payload = json.dumps({"delta": text}, ensure_ascii=False)
+                    payload = json.dumps({"type": "delta", "delta": text}, ensure_ascii=False)
                     yield f"data: {payload}\n\n"
 
             with get_db_connection() as connection:
@@ -1237,7 +1435,7 @@ def post_conversation_chat_stream(
                 len(assistant_text),
                 elapsed_ms,
             )
-            done_payload = json.dumps({"done": True, "model": MODEL_NAME}, ensure_ascii=False)
+            done_payload = json.dumps({"type": "done", "done": True, "model": MODEL_NAME}, ensure_ascii=False)
             yield f"data: {done_payload}\n\n"
         except Exception as error:  # pragma: no cover - network call
             with get_db_connection() as connection:
@@ -1264,13 +1462,13 @@ def post_conversation_chat_stream(
                         (state_fallback_reply, assistant_message_id),
                     )
                     refresh_conversation_stats(connection, conversation_id)
-                fallback_payload = json.dumps({"delta": state_fallback_reply}, ensure_ascii=False)
+                fallback_payload = json.dumps({"type": "delta", "delta": state_fallback_reply}, ensure_ascii=False)
                 yield f"data: {fallback_payload}\n\n"
-                done_payload = json.dumps({"done": True, "model": "state-router-fallback"}, ensure_ascii=False)
+                done_payload = json.dumps({"type": "done", "done": True, "model": "state-router-fallback"}, ensure_ascii=False)
                 yield f"data: {done_payload}\n\n"
                 return
             error_payload = json.dumps(
-                {"error": f"Anthropic stream failed: {error}"}, ensure_ascii=False
+                {"type": "error", "error": f"Anthropic stream failed: {error}"}, ensure_ascii=False
             )
             yield f"data: {error_payload}\n\n"
 

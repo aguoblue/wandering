@@ -4,8 +4,7 @@ import { Search, Filter, MapPin, LoaderCircle, Check } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { motion } from 'motion/react';
-import { getAllPlans, upsertGeneratedPlan } from '../data/plansStore';
-import { generatePlanWithAi } from '../services/aiPlanClient';
+import { getAllPlans } from '../data/plansStore';
 import {
   locateCenterByKeyword,
   locateCenterByLocation,
@@ -20,9 +19,6 @@ import { TravelChatPanel } from '../components/TravelChatPanel';
 export function PlansListPage() {
   const [plans, setPlans] = useState(getAllPlans);
   const [keyword, setKeyword] = useState('');
-  const [city, setCity] = useState('深圳');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState('');
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [suggestions, setSuggestions] = useState<DiscoverySuggestion[]>([]);
@@ -78,37 +74,8 @@ export function PlansListPage() {
     setShowSuggestions(false);
   };
 
-  const handleGeneratePlan = async () => {
-    if (!city.trim()) {
-      setGenerateError('请先填写城市');
-      return;
-    }
-
-    setIsGenerating(true);
-    setGenerateError('');
-
-    try {
-      const result = await generatePlanWithAi({
-        city: city.trim(),
-        days: 1,
-        activitiesPerDay: 4,
-        startDate: '2026-05-01',
-        budgetRange: '¥700-2200',
-        style: '城市漫游、美食、海滨、拍照、轻松节奏'
-      });
-
-      const generated = result.plans[0];
-      if (!generated) {
-        throw new Error('未生成有效计划');
-      }
-
-      upsertGeneratedPlan(generated);
-      setPlans(getAllPlans());
-    } catch (error) {
-      setGenerateError(error instanceof Error ? error.message : 'AI 生成失败，请稍后重试');
-    } finally {
-      setIsGenerating(false);
-    }
+  const handlePlanGeneratedFromChat = () => {
+    setPlans(getAllPlans());
   };
 
   const handleSearchLocation = async () => {
@@ -429,26 +396,6 @@ export function PlansListPage() {
           </Button>
         </div>
 
-        <div className="p-4 bg-white rounded-lg shadow-sm border">
-          <div className="flex flex-col md:flex-row gap-3">
-            <Input
-              value={city}
-              onChange={(event) => setCity(event.target.value)}
-              placeholder="输入城市，如：深圳"
-              className="md:max-w-xs"
-            />
-            <Button onClick={handleGeneratePlan} disabled={isGenerating}>
-              {isGenerating ? 'AI 生成中...' : 'AI 生成一条计划'}
-            </Button>
-          </div>
-          {generateError && (
-            <p className="text-sm text-red-500 mt-2">{generateError}</p>
-          )}
-          <p className="text-xs text-muted-foreground mt-2">
-            会调用本地 /api/ai/generate-plan，并把结果加入当前列表与本地存储。
-          </p>
-        </div>
-
         <motion.div
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
           initial={{ opacity: 0 }}
@@ -489,7 +436,7 @@ export function PlansListPage() {
         </div>
           </div>
 
-          <TravelChatPanel />
+          <TravelChatPanel onPlanGenerated={handlePlanGeneratedFromChat} />
         </div>
       </div>
     </div>
