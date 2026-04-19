@@ -1,3 +1,15 @@
+# 20260420 figma AI 意图识别接入（第 2 步）
+
+1. **新增意图识别函数**：`figma/server/ai_server.py` 新增 `detect_intent(message, conversation_state)`，输出 `chat / generate_plan / confirm / reject / update_slots` 五类意图；当前只基于关键词与会话状态做轻量判断。
+2. **仅记录不执行**：在 `/api/conversations/{id}/chat/stream` 入口新增 `conversation stream intent` 日志，打印 `state + intent`；不改变原有回复流程，不触发计划生成。
+3. **行为保持不变**：当前阶段仍是原来的聊天流式回复链路，仅增加可观测性，便于第 3 步接入状态机前先观察真实对话意图分布。
+
+# 20260420 figma AI 会话状态骨架（第 1 步）
+
+1. **会话表新增字段**：`figma/server/ai_server.py` 的 `conversations` 表补充 `state`、`plan_draft`、`pending_action` 三个字段，默认值分别为 `normal_chat`、`{}`、`{}`，为后续“对话内触发生成计划”状态机做准备。
+2. **兼容旧库迁移**：启动初始化时增加 `PRAGMA table_info + ALTER TABLE` 的轻量迁移逻辑，已有 `chat.db` 会自动补齐新字段，不影响现有消息数据。
+3. **会话返回结构扩展**：会话元数据中新增 `state`、`planDraft`、`pendingAction` 字段（JSON 解析容错），当前阶段仅提供骨架，不改变聊天行为。
+
 # 20260419 修正 figma server .db 被 gitignore 仍出现在 status
 
 1. **原因**：`figma/server/**/*.db` 规则本身有效，但 `chat.db` 曾被加入版本库时，忽略规则不会对已跟踪文件生效。

@@ -39,6 +39,9 @@ LOG_STREAM_CHUNKS = os.environ.get("AI_SERVER_LOG_STREAM_CHUNKS", "").lower() in
     "yes",
     "on",
 }
+DEFAULT_CONVERSATION_STATE = "normal_chat"
+DEFAULT_PLAN_DRAFT_JSON = "{}"
+DEFAULT_PENDING_ACTION_JSON = "{}"
 
 
 class ChatMessage(BaseModel):
@@ -53,6 +56,15 @@ class ChatInput(BaseModel):
 
 class ConversationChatInput(BaseModel):
     message: str
+
+
+IntentType = Literal[
+    "chat",
+    "generate_plan",
+    "confirm",
+    "reject",
+    "update_slots",
+]
 
 
 app = FastAPI()
@@ -138,7 +150,10 @@ def init_db() -> None:
               title TEXT NOT NULL,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
-              message_count INTEGER NOT NULL DEFAULT 0
+              message_count INTEGER NOT NULL DEFAULT 0,
+              state TEXT NOT NULL DEFAULT 'normal_chat',
+              plan_draft TEXT NOT NULL DEFAULT '{}',
+              pending_action TEXT NOT NULL DEFAULT '{}'
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -157,15 +172,55 @@ def init_db() -> None:
             ON messages(conversation_id, created_at);
             """
         )
+        ensure_conversation_state_columns(connection)
+
+
+def ensure_conversation_state_columns(connection: sqlite3.Connection) -> None:
+    rows = connection.execute("PRAGMA table_info(conversations)").fetchall()
+    existing_columns = {str(row["name"]) for row in rows}
+
+    if "state" not in existing_columns:
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN state TEXT NOT NULL DEFAULT 'normal_chat'"
+        )
+    if "plan_draft" not in existing_columns:
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN plan_draft TEXT NOT NULL DEFAULT '{}'"
+        )
+    if "pending_action" not in existing_columns:
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN pending_action TEXT NOT NULL DEFAULT '{}'"
+        )
+
+
+def parse_json_or_default(raw_text: Any, default_value: Any) -> Any:
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return default_value
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        return default_value
 
 
 def to_conversation_meta(row: sqlite3.Row) -> dict[str, Any]:
+    state = str(row["state"]) if "state" in row.keys() and row["state"] else DEFAULT_CONVERSATION_STATE
+    plan_draft = parse_json_or_default(
+        row["plan_draft"] if "plan_draft" in row.keys() else DEFAULT_PLAN_DRAFT_JSON,
+        {},
+    )
+    pending_action = parse_json_or_default(
+        row["pending_action"] if "pending_action" in row.keys() else DEFAULT_PENDING_ACTION_JSON,
+        {},
+    )
     return {
         "id": row["id"],
         "title": row["title"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "messageCount": row["message_count"],
+        "state": state,
+        "planDraft": plan_draft,
+        "pendingAction": pending_action,
     }
 
 
@@ -181,7 +236,7 @@ def to_message(row: sqlite3.Row) -> dict[str, Any]:
 def ensure_conversation_exists(connection: sqlite3.Connection, conversation_id: str) -> sqlite3.Row:
     row = connection.execute(
         """
-        SELECT id, title, created_at, updated_at, message_count
+        SELECT id, title, created_at, updated_at, message_count, state, plan_draft, pending_action
         FROM conversations
         WHERE id = ?
         """,
@@ -195,7 +250,7 @@ def ensure_conversation_exists(connection: sqlite3.Connection, conversation_id: 
 def list_conversations_from_db(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT id, title, created_at, updated_at, message_count
+        SELECT id, title, created_at, updated_at, message_count, state, plan_draft, pending_action
         FROM conversations
         ORDER BY updated_at DESC
         """
@@ -270,6 +325,84 @@ def normalize_messages(body: ChatInput) -> list[dict[str, str]]:
         raise HTTPException(status_code=400, detail="messages is required")
 
     return normalized[-24:]
+
+
+def detect_intent(message: str, conversation_state: str = DEFAULT_CONVERSATION_STATE) -> IntentType:
+    text = (message or "").strip().lower()
+    if not text:
+        return "chat"
+
+    confirm_keywords = {
+        "好",
+        "好的",
+        "可以",
+        "行",
+        "嗯",
+        "嗯嗯",
+        "是的",
+        "确认",
+        "开始吧",
+        "生成吧",
+        "就这样",
+    }
+    reject_keywords = {
+        "不用",
+        "先不用",
+        "不要",
+        "不需要",
+        "取消",
+        "算了",
+        "等等",
+        "先别",
+    }
+    generate_keywords = {
+        "生成计划",
+        "生成行程",
+        "出行计划",
+        "旅行计划",
+        "旅游计划",
+        "帮我做计划",
+        "安排一下",
+        "做个攻略",
+        "制定行程",
+    }
+    slot_keywords = {
+        "预算",
+        "天",
+        "日",
+        "城市",
+        "出发",
+        "开始日期",
+        "风格",
+        "偏好",
+        "节奏",
+        "人数",
+        "亲子",
+        "情侣",
+        "老人",
+        "美食",
+        "拍照",
+        "不爬山",
+    }
+
+    if any(keyword in text for keyword in generate_keywords):
+        return "generate_plan"
+
+    if text in confirm_keywords and conversation_state in {
+        "awaiting_confirm_generate",
+        "collecting_plan_slots",
+    }:
+        return "confirm"
+
+    if text in reject_keywords:
+        return "reject"
+
+    if conversation_state in {"collecting_plan_slots", "awaiting_confirm_generate"} and any(
+        keyword in text for keyword in slot_keywords
+    ):
+        return "update_slots"
+
+    return "chat"
 
 
 def build_conversation_messages_for_model(
@@ -390,10 +523,20 @@ def post_conversations() -> dict[str, Any]:
     with get_db_connection() as connection:
         connection.execute(
             """
-            INSERT INTO conversations (id, title, created_at, updated_at, message_count)
-            VALUES (?, ?, ?, ?, 0)
+            INSERT INTO conversations (
+              id, title, created_at, updated_at, message_count, state, plan_draft, pending_action
+            )
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?)
             """,
-            (conversation_id, "新对话", current_time, current_time),
+            (
+                conversation_id,
+                "新对话",
+                current_time,
+                current_time,
+                DEFAULT_CONVERSATION_STATE,
+                DEFAULT_PLAN_DRAFT_JSON,
+                DEFAULT_PENDING_ACTION_JSON,
+            ),
         )
         row = ensure_conversation_exists(connection, conversation_id)
     return {"conversation": to_conversation_meta(row)}
@@ -436,7 +579,20 @@ def post_conversation_chat_stream(
     )
 
     with get_db_connection() as connection:
-        ensure_conversation_exists(connection, conversation_id)
+        conversation_row = ensure_conversation_exists(connection, conversation_id)
+        conversation_state = (
+            str(conversation_row["state"])
+            if "state" in conversation_row.keys() and conversation_row["state"]
+            else DEFAULT_CONVERSATION_STATE
+        )
+        detected_intent = detect_intent(user_message, conversation_state)
+        logger.info(
+            "conversation stream intent | request_id=%s | conversation_id=%s | state=%s | intent=%s",
+            request_id,
+            conversation_id,
+            conversation_state,
+            detected_intent,
+        )
         base_time = now_ms()
         user_message_id = f"msg_{uuid.uuid4().hex}"
         assistant_message_id = f"msg_{uuid.uuid4().hex}"

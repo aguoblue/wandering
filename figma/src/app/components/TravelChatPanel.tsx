@@ -368,7 +368,7 @@ export function TravelChatPanel() {
             <p className="text-xs text-muted-foreground">支持 `Cmd/Ctrl + Enter` 快速发送</p>
             <Button
               onClick={() => void handleSendMessage()}
-              disabled={isSending || isLoadingConversations || !draft.trim() || !activeConversationId}
+              disabled={isSending || !draft.trim()}
             >
               <SendHorizonal className="size-4" />
               发送
