@@ -5,6 +5,11 @@ export interface ChatReply {
   };
 }
 
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 interface ChatStreamEvent {
   delta?: string;
   done?: boolean;
@@ -12,13 +17,13 @@ interface ChatStreamEvent {
   error?: string;
 }
 
-export async function sendChatMessage(message: string) {
+export async function sendChatMessage(messages: ChatTurn[]) {
   const response = await fetch('/api/ai/chat', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ messages })
   });
 
   if (!response.ok) {
@@ -35,7 +40,7 @@ export async function sendChatMessage(message: string) {
 }
 
 export async function sendChatMessageStream(
-  message: string,
+  messages: ChatTurn[],
   onDelta: (chunk: string) => void
 ) {
   const response = await fetch('/api/ai/chat/stream', {
@@ -44,7 +49,7 @@ export async function sendChatMessageStream(
       'Content-Type': 'application/json',
       Accept: 'text/event-stream'
     },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ messages })
   });
 
   if (!response.ok) {

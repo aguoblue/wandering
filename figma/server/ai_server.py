@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Literal
 
 from anthropic import Anthropic
 import uvicorn
@@ -27,8 +27,14 @@ MODEL_NAME = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatInput(BaseModel):
-    message: str
+    messages: list[ChatMessage] | None = None
+    message: str | None = None
 
 
 app = FastAPI()
@@ -41,7 +47,30 @@ app.add_middleware(
 )
 
 
-def request_anthropic(system_prompt: str, user_prompt: str) -> str:
+def normalize_messages(body: ChatInput) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+
+    if body.messages:
+        for item in body.messages:
+            content = item.content.strip()
+            if not content:
+                continue
+            normalized.append({"role": item.role, "content": content})
+
+    if not normalized and body.message:
+        fallback = body.message.strip()
+        if fallback:
+            normalized = [{"role": "user", "content": fallback}]
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="messages is required")
+
+    # Keep recent turns to control context size.
+    max_messages = 24
+    return normalized[-max_messages:]
+
+
+def request_anthropic(system_prompt: str, messages: list[dict[str, str]]) -> str:
     if not API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY is missing")
 
@@ -56,7 +85,7 @@ def request_anthropic(system_prompt: str, user_prompt: str) -> str:
             max_tokens=2600,
             temperature=0,
             system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=messages,
         )
     except Exception as error:
         raise HTTPException(
@@ -71,7 +100,7 @@ def request_anthropic(system_prompt: str, user_prompt: str) -> str:
     raise HTTPException(status_code=500, detail="No text returned from model")
 
 
-def stream_anthropic(system_prompt: str, user_prompt: str):
+def stream_anthropic(system_prompt: str, messages: list[dict[str, str]]):
     if not API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY is missing")
 
@@ -87,7 +116,7 @@ def stream_anthropic(system_prompt: str, user_prompt: str):
                 max_tokens=2600,
                 temperature=0,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                messages=messages,
             ) as stream:
                 for text in stream.text_stream:
                     if not text:
@@ -117,11 +146,8 @@ def get_health() -> dict[str, Any]:
 
 @app.post("/api/ai/chat")
 def post_chat(body: ChatInput) -> dict[str, Any]:
-    message = body.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message is required")
-
-    reply = request_anthropic(AI_CHAT_SYSTEM_PROMPT, message)
+    messages = normalize_messages(body)
+    reply = request_anthropic(AI_CHAT_SYSTEM_PROMPT, messages)
     return {
         "reply": reply,
         "usage": {
@@ -132,11 +158,8 @@ def post_chat(body: ChatInput) -> dict[str, Any]:
 
 @app.post("/api/ai/chat/stream")
 def post_chat_stream(body: ChatInput) -> StreamingResponse:
-    message = body.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message is required")
-
-    stream = stream_anthropic(AI_CHAT_SYSTEM_PROMPT, message)
+    messages = normalize_messages(body)
+    stream = stream_anthropic(AI_CHAT_SYSTEM_PROMPT, messages)
     return StreamingResponse(
         stream,
         media_type="text/event-stream",

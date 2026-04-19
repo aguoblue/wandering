@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
-import { sendChatMessageStream } from '../services/chatClient';
+import { sendChatMessageStream, type ChatTurn } from '../services/chatClient';
 
 interface ChatMessage {
   id: string;
@@ -15,8 +15,26 @@ interface ChatMessage {
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: '你好，我现在是一个无记忆版本的 AI 助手。你每次发来的问题，我都会独立回答，不会自动参考上一次对话。'
+  content: '你好，我会结合当前会话里的历史消息来回答你。刷新页面后，会话历史会清空。'
 };
+
+function toApiTurns(messages: ChatMessage[], currentUserInput: string): ChatTurn[] {
+  const history = messages
+    .filter((item) => item.id !== WELCOME_MESSAGE.id)
+    .map((item) => ({
+      role: item.role,
+      content: item.content.trim()
+    }))
+    .filter((item) => item.content.length > 0);
+
+  history.push({
+    role: 'user',
+    content: currentUserInput
+  });
+
+  // Keep recent turns to avoid oversized payloads.
+  return history.slice(-24);
+}
 
 export function TravelChatPanel() {
   const [draft, setDraft] = useState('');
@@ -35,6 +53,7 @@ export function TravelChatPanel() {
   const handleSendMessage = async () => {
     const content = draft.trim();
     if (!content || isSending) return;
+    const apiTurns = toApiTurns(messages, content);
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -59,7 +78,7 @@ export function TravelChatPanel() {
     ]);
 
     try {
-      await sendChatMessageStream(content, (chunk) => {
+      await sendChatMessageStream(apiTurns, (chunk) => {
         setMessages((current) =>
           current.map((message) =>
             message.id === assistantId
@@ -88,7 +107,7 @@ export function TravelChatPanel() {
           </div>
           <div>
             <h2 className="text-base font-semibold">AI 对话框</h2>
-            <p className="text-xs text-muted-foreground mt-1">第一版为单轮问答，同一会话中的每次提问都会独立发送给 AI。</p>
+            <p className="text-xs text-muted-foreground mt-1">支持会话内上下文；当前版本刷新页面后不保留历史记录。</p>
           </div>
         </div>
       </div>
