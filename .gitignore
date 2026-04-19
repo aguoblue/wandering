@@ -1,5 +1,9 @@
 .cursor/
 
+# Python cache
+__pycache__/
+*.py[cod]
+
 # figma app: keep source, ignore local deps/build output
 figma/node_modules/
 figma/dist/
