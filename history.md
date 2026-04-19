@@ -1,3 +1,36 @@
+# 20260420 figma 计划会话改为“仅计划页新建才绑定”
+
+1. **首页对话不再自动绑定计划**：`figma/src/app/components/TravelChatPanel.tsx` 在首页模式收到 `plan` 事件时，仅 `upsertGeneratedPlan` 存计划，不再把“生成计划的首页会话”回链到计划。
+2. **计划页会话绑定范围收敛**：进入计划详情页后，会话列表仅展示该计划页内新建并绑定过的会话；不再默认带入历史“来源生成会话”。
+3. **允许一会话生成多计划**：计划页会话中如果再次生成新计划，会把“新计划ID -> 当前会话ID”建立关联，支持一个会话后续关联多个计划。
+4. **本地关联表版本升级**：`figma/src/app/data/plansStore.ts` 将键升级为 `figma_plan_conversation_links_v2`，并简化结构为 `planId -> conversationIds[]`，清除旧版“sourceConversation”语义。
+5. **构建验证**：`cd figma && npm run build` 通过。
+6. **计划会话首页隐藏**：`figma/src/app/components/TravelChatPanel.tsx` 在首页模式会过滤掉所有已绑定到任意计划的会话；新增 `figma/src/app/data/plansStore.ts#getAllLinkedConversationIds` 供过滤使用，确保“计划页新开的会话仅在对应计划页可见”。
+7. **计划上下文消息显示修复**：`figma/src/app/components/TravelChatPanel.tsx` 新增计划模式用户消息展示清洗（仅显示“用户的新问题”），避免把注入的计划摘要原文展示在聊天气泡里。
+8. **新会话发送后被重置修复**：`TravelChatPanel` 刷新会话时显式传入最新 `idsOverride`，避免因状态异步导致刚创建的计划会话被过滤掉并误回到“新建对话”空态。
+9. **首页初始化漏过滤修复**：`TravelChatPanel` 初始化会话列表时，首页模式改为复用 `getFilteredConversations(list)`，避免首次进入首页时把计划私有会话展示出来。
+10. **计划上下文改为隐藏字段**：前端 `sendConversationMessageStream` 新增 `planContext` 入参并单独传输；`TravelChatPanel` 计划页首条消息仅提交用户原文作为 `message`，计划摘要走 `planContext`。
+11. **会话标题回归真实用户输入**：后端 `ConversationChatInput` 新增可选 `planContext`，仅用于模型 `system_prompt` 增强，不写入消息表；因此标题提取重新基于用户真实首条消息生成。
+12. **计划页对话支持“更新当前计划”闭环**：`ConversationChatInput` 新增 `targetPlanId/currentPlan`；后端新增 `update_plan_from_existing`，命中调整意图后返回 `type=plan_update` SSE 事件（包含更新后的完整计划）。
+13. **详情页左侧实时刷新**：前端 `chatClient` 新增 `plan_update` 事件解析；`TravelChatPanel` 收到后执行 `upsertGeneratedPlan(plan)` 并触发 `onPlanGenerated`，计划详情左侧行程/地图可立即显示更新内容。
+14. **新建会话自动聚焦输入框**：`TravelChatPanel` 新增输入框 `ref` 与 `focusInput`，点击“新建”及进入默认新会话态后，会自动将光标定位到文本框，支持立即输入。
+15. **计划页每轮携带计划上下文**：`TravelChatPanel` 在计划页发送消息时，不再仅首条携带 `planContext`，而是每轮都传 `planContext + targetPlanId + currentPlan`，确保后续对话持续感知当前计划。
+16. **计划编辑改为“先判意图再更新”**：`ai_server.py` 新增 `detect_plan_edit_intent`，在计划页请求中先判断 `update_plan/chat`；命中 `update_plan` 才走结构化整计划更新，否则走普通对话回复。
+17. **计划更新 JSON 失败自动重试**：`update_plan_from_existing` 对 AI 返回的 JSON 解析增加二次重试提示，降低因格式不合法导致的更新失败概率。
+18. **plan_update 事件补充意图字段**：后端 `plan_update` SSE 事件新增 `intent=update_plan`，明确表示本轮为计划结构化修改回执。
+19. **计划修改提示词升级**：`ai_server.py` 新增 `AI_PLAN_UPDATE_SYSTEM_PROMPT`，将“修改计划”与“生成计划”拆分为独立系统提示词，强调“基于当前计划修改并返回完整合法 JSON”。
+20. **修改结果 JSON 修复回退**：`update_plan_from_existing` 在首次解析失败后，新增 `JSON_ARRAY_REPAIR_SYSTEM_PROMPT` 进行自动修复再解析，降低 `JSONDecodeError` 失败率。
+21. **计划页问答注入完整计划 JSON**：`ai_server.py` 在计划页请求（携带 `currentPlan`）的普通问答分支中，将完整计划 JSON 注入系统上下文，优先用于回答“具体时间/地点/活动安排”等细节问题。
+
+# 20260420 figma 计划详情页接入右侧 AI 对话与计划关联会话
+
+1. **计划-会话关联存储**：`figma/src/app/data/plansStore.ts` 新增本地关联表（`figma_plan_conversation_links_v1`），支持记录 `plan -> sourceConversationId + conversationIds`，并提供 `getPlanConversationIds/getPlanSourceConversationId/linkConversationToPlan` 能力。
+2. **对话组件支持计划上下文模式**：`figma/src/app/components/TravelChatPanel.tsx` 新增 `relatedPlan` 参数；在计划详情页中会话列表仅展示该计划关联会话，且每次进入默认是新对话模式。
+3. **新会话自动携带计划记忆**：在计划模式下首次发送会自动附带计划摘要（计划名、目的地、天数与日程概览）到请求体，确保“新开对话也理解当前计划”。
+4. **生成与编辑自动回链**：对话中产出 `plan` 事件时，`upsertGeneratedPlan` 会同时写入会话关联；计划模式下新建会话发送后也会自动绑定到当前计划。
+5. **详情页右侧接入 AI 对话框**：`figma/src/app/pages/PlanDetailPage.tsx` 改为左右布局（左侧行程/地图，右侧 `TravelChatPanel`），满足“点进计划后即可继续/新开对话”。
+6. **构建验证**：`cd figma && npm run build` 通过。
+
 # 20260420 figma 会话改为 AI 结构化抽取（意图+参数）两段式
 
 1. **第一段 JSON 抽取上线**：`figma/server/ai_server.py` 新增 `STRUCTURED_EXTRACTION_SYSTEM_PROMPT` 与 `extract_turn_structured_by_ai`，由模型先输出结构化结果（`intent/confidence/should_exit_plan_flow/slots_patch`）。

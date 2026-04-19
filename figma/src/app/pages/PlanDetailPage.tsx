@@ -8,11 +8,13 @@ import { ArrowLeft, Calendar, TrendingUp, Wallet, MapIcon, List } from 'lucide-r
 import { motion } from 'motion/react';
 import { useState } from 'react';
 import { getAllPlans } from '../data/plansStore';
+import { TravelChatPanel } from '../components/TravelChatPanel';
 
 export function PlanDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeDay, setActiveDay] = useState(0);
+  const [, setPlansVersion] = useState(0);
   
   const plan = getAllPlans().find(p => p.id === id);
   
@@ -96,138 +98,157 @@ export function PlanDetailPage() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <Tabs defaultValue="itinerary" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="itinerary" className="gap-2">
-              <List className="size-4" />
-              行程详情
-            </TabsTrigger>
-            <TabsTrigger value="map" className="gap-2">
-              <MapIcon className="size-4" />
-              地图模式
-            </TabsTrigger>
-          </TabsList>
+      <div className="max-w-[1440px] mx-auto px-4 py-8">
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div>
+            <Tabs defaultValue="itinerary" className="space-y-6">
+              <TabsList className="grid w-full max-w-md grid-cols-2">
+                <TabsTrigger value="itinerary" className="gap-2">
+                  <List className="size-4" />
+                  行程详情
+                </TabsTrigger>
+                <TabsTrigger value="map" className="gap-2">
+                  <MapIcon className="size-4" />
+                  地图模式
+                </TabsTrigger>
+              </TabsList>
 
-          {/* Itinerary Tab */}
-          <TabsContent value="itinerary" className="space-y-6">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              {plan.days.map((day, index) => (
+              {/* Itinerary Tab */}
+              <TabsContent value="itinerary" className="space-y-6">
                 <motion.div
-                  key={day.day}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: index * 0.1 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5 }}
                 >
-                  <DayItinerary day={day} />
-                </motion.div>
-              ))}
-            </motion.div>
-          </TabsContent>
-
-          {/* Map Tab */}
-          <TabsContent value="map" className="space-y-4">
-            {/* Day Selector */}
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                variant={activeDay === -1 ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setActiveDay(-1)}
-              >
-                完整路线
-              </Button>
-              {plan.days.map((day, index) => (
-                <Button
-                  key={day.day}
-                  variant={activeDay === index ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setActiveDay(index)}
-                >
-                  第 {day.day} 天
-                </Button>
-              ))}
-            </div>
-
-            {/* Map Legend */}
-            <div className="bg-white p-4 rounded-lg shadow-sm">
-              <h3 className="font-semibold mb-3">图例说明</h3>
-              <div className="flex flex-wrap gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="size-3 rounded-full bg-amber-500" />
-                  <span>上午</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="size-3 rounded-full bg-orange-500" />
-                  <span>中午</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="size-3 rounded-full bg-blue-500" />
-                  <span>下午</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="size-3 rounded-full bg-purple-500" />
-                  <span>晚上</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Map Container */}
-            <motion.div 
-              className="h-[600px] rounded-lg overflow-hidden shadow-lg"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              <MapView 
-                activities={activeDay === -1 ? allActivities : currentDayActivities}
-                planName={plan.name}
-              />
-            </motion.div>
-
-            {/* Activity List for Selected Day */}
-            {activeDay !== -1 && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <h3 className="font-semibold mb-4">第 {activeDay + 1} 天活动</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {currentDayActivities.map((activity, index) => (
-                    <div 
-                      key={activity.id}
-                      className="p-3 rounded-lg border bg-white hover:shadow-md transition-shadow"
+                  {plan.days.map((day, index) => (
+                    <motion.div
+                      key={day.day}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.5, delay: index * 0.1 }}
                     >
-                      <div className="flex items-start gap-2">
-                        <div className="flex-shrink-0 flex items-center justify-center size-6 rounded-full text-xs font-bold text-white"
-                          style={{ backgroundColor: (() => {
-                            switch (activity.period) {
-                              case '上午': return '#f59e0b';
-                              case '中午': return '#f97316';
-                              case '下午': return '#3b82f6';
-                              case '晚上': return '#a855f7';
-                              default: return '#6b7280';
-                            }
-                          })() }}
-                        >
-                          {index + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-semibold text-sm truncate">{activity.title}</h4>
-                          <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
-                        </div>
-                      </div>
-                    </div>
+                      <DayItinerary day={day} />
+                    </motion.div>
+                  ))}
+                </motion.div>
+              </TabsContent>
+
+              {/* Map Tab */}
+              <TabsContent value="map" className="space-y-4">
+                {/* Day Selector */}
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant={activeDay === -1 ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setActiveDay(-1)}
+                  >
+                    完整路线
+                  </Button>
+                  {plan.days.map((day, index) => (
+                    <Button
+                      key={day.day}
+                      variant={activeDay === index ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setActiveDay(index)}
+                    >
+                      第 {day.day} 天
+                    </Button>
                   ))}
                 </div>
-              </motion.div>
-            )}
-          </TabsContent>
-        </Tabs>
+
+                {/* Map Legend */}
+                <div className="bg-white p-4 rounded-lg shadow-sm">
+                  <h3 className="font-semibold mb-3">图例说明</h3>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="size-3 rounded-full bg-amber-500" />
+                      <span>上午</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="size-3 rounded-full bg-orange-500" />
+                      <span>中午</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="size-3 rounded-full bg-blue-500" />
+                      <span>下午</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="size-3 rounded-full bg-purple-500" />
+                      <span>晚上</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Map Container */}
+                <motion.div
+                  className="h-[600px] rounded-lg overflow-hidden shadow-lg"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  <MapView
+                    activities={activeDay === -1 ? allActivities : currentDayActivities}
+                    planName={plan.name}
+                  />
+                </motion.div>
+
+                {/* Activity List for Selected Day */}
+                {activeDay !== -1 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                  >
+                    <h3 className="font-semibold mb-4">第 {activeDay + 1} 天活动</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {currentDayActivities.map((activity, index) => (
+                        <div
+                          key={activity.id}
+                          className="p-3 rounded-lg border bg-white hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex items-start gap-2">
+                            <div
+                              className="flex-shrink-0 flex items-center justify-center size-6 rounded-full text-xs font-bold text-white"
+                              style={{
+                                backgroundColor: (() => {
+                                  switch (activity.period) {
+                                    case '上午':
+                                      return '#f59e0b';
+                                    case '中午':
+                                      return '#f97316';
+                                    case '下午':
+                                      return '#3b82f6';
+                                    case '晚上':
+                                      return '#a855f7';
+                                    default:
+                                      return '#6b7280';
+                                  }
+                                })()
+                              }}
+                            >
+                              {index + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-semibold text-sm truncate">{activity.title}</h4>
+                              <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          <TravelChatPanel
+            relatedPlan={plan}
+            onPlanGenerated={() => {
+              setPlansVersion((current) => current + 1);
+            }}
+          />
+        </div>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, LoaderCircle, MessageSquarePlus, SendHorizonal, Trash2, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -14,7 +14,13 @@ import {
   type ChatMessage,
   type ConversationMeta
 } from '../services/chatClient';
-import { upsertGeneratedPlan } from '../data/plansStore';
+import {
+  getAllLinkedConversationIds,
+  getPlanConversationIds,
+  linkConversationToPlan,
+  upsertGeneratedPlan
+} from '../data/plansStore';
+import type { TravelPlan } from '../data/mockPlans';
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -22,6 +28,9 @@ const WELCOME_MESSAGE: ChatMessage = {
   content: '你好，我会结合当前会话里的历史消息来回答你。',
   createdAt: 0
 };
+
+const PLAN_CONTEXT_PREFIX = '以下是当前关联的旅行计划，请你基于该计划继续对话与调整。';
+const PLAN_CONTEXT_USER_MARKER = '\n\n用户的新问题：';
 
 function formatConversationTime(timestamp: number) {
   const date = new Date(timestamp);
@@ -46,12 +55,52 @@ function formatConversationTime(timestamp: number) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-interface TravelChatPanelProps {
-  onPlanGenerated?: () => void;
+function summarizePlanForPrompt(plan: TravelPlan) {
+  const daySummaries = plan.days
+    .map((day) => {
+      const titles = day.activities.map((activity) => activity.title).slice(0, 5);
+      return `第${day.day}天(${day.date})：${titles.join('、')}`;
+    })
+    .join('\n');
+
+  return [
+    '以下是当前关联的旅行计划，请你基于该计划继续对话与调整。',
+    '不要逐字复述全部计划，只需在用户要求时输出修改结果。',
+    `计划ID：${plan.id}`,
+    `计划名称：${plan.name}`,
+    `目的地：${plan.destination}`,
+    `时长：${plan.duration}`,
+    `预算：${plan.budget}`,
+    `亮点：${plan.highlight}`,
+    `日程概览：\n${daySummaries}`
+  ].join('\n');
 }
 
-export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
+function normalizeMessageForDisplay(message: ChatMessage, isPlanScoped: boolean): ChatMessage {
+  if (!isPlanScoped || message.role !== 'user') return message;
+  if (!message.content.startsWith(PLAN_CONTEXT_PREFIX)) return message;
+  const markerIndex = message.content.indexOf(PLAN_CONTEXT_USER_MARKER);
+  if (markerIndex < 0) return message;
+  const nextContent = message.content.slice(markerIndex + PLAN_CONTEXT_USER_MARKER.length).trim();
+  if (!nextContent) return message;
+  return {
+    ...message,
+    content: nextContent
+  };
+}
+
+function normalizeMessagesForDisplay(messages: ChatMessage[], isPlanScoped: boolean) {
+  return messages.map((message) => normalizeMessageForDisplay(message, isPlanScoped));
+}
+
+interface TravelChatPanelProps {
+  onPlanGenerated?: () => void;
+  relatedPlan?: TravelPlan;
+}
+
+export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPanelProps) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
+  const [relatedConversationIds, setRelatedConversationIds] = useState<string[]>([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -60,13 +109,40 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
   const [error, setError] = useState('');
   const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sendLockRef = useRef(false);
+  const isPlanScoped = Boolean(relatedPlan);
 
-  const refreshConversations = async (preferredConversationId?: string) => {
+  const focusInput = () => {
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  const scopedConversationIds = useMemo(() => {
+    if (!relatedPlan) return [];
+    if (relatedConversationIds.length > 0) return relatedConversationIds;
+    return getPlanConversationIds(relatedPlan.id);
+  }, [relatedConversationIds, relatedPlan]);
+
+  const getFilteredConversations = (list: ConversationMeta[], idsOverride?: string[]) => {
+    if (!isPlanScoped) {
+      const linkedConversationIds = new Set(getAllLinkedConversationIds());
+      return list.filter((item) => !linkedConversationIds.has(item.id));
+    }
+    const ids = idsOverride ?? scopedConversationIds;
+    if (ids.length === 0) return [];
+    const idSet = new Set(ids);
+    return list.filter((item) => idSet.has(item.id));
+  };
+
+  const refreshConversations = async (preferredConversationId?: string, idsOverride?: string[]) => {
     const list = await listConversations();
-    setConversations(list);
+    const scopedList = getFilteredConversations(list, idsOverride);
+    setConversations(scopedList);
+
     const nextActiveId =
-      preferredConversationId && list.some((item) => item.id === preferredConversationId)
+      preferredConversationId && scopedList.some((item) => item.id === preferredConversationId)
         ? preferredConversationId
         : '';
     if (!nextActiveId) {
@@ -76,7 +152,7 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     }
     const data = await getConversationMessages(nextActiveId);
     setActiveConversationId(nextActiveId);
-    setMessages(data.messages);
+    setMessages(normalizeMessagesForDisplay(data.messages, isPlanScoped));
   };
 
   useEffect(() => {
@@ -84,12 +160,22 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     const init = async () => {
       setIsLoadingConversations(true);
       try {
-        const list = await listConversations();
-
+        const planConversationIds = relatedPlan ? getPlanConversationIds(relatedPlan.id) : [];
         if (!isActive) return;
-        setConversations(list);
+        setRelatedConversationIds(planConversationIds);
+
+        const list = await listConversations();
+        if (!isActive) return;
+
+        const scopedList = relatedPlan
+          ? getFilteredConversations(list, planConversationIds)
+          : getFilteredConversations(list);
+        setConversations(scopedList);
+
+        // 每次进入页面默认新对话模式
         setActiveConversationId('');
         setMessages([]);
+        focusInput();
       } catch (nextError) {
         if (!isActive) return;
         setError(nextError instanceof Error ? nextError.message : '加载会话失败');
@@ -104,7 +190,7 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [relatedPlan?.id]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -120,6 +206,7 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     setMessages([]);
     setDraft('');
     setError('');
+    focusInput();
   };
 
   const handleSwitchConversation = async (conversationId: string) => {
@@ -128,7 +215,7 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
       setError('');
       const data = await getConversationMessages(conversationId);
       setActiveConversationId(conversationId);
-      setMessages(data.messages);
+      setMessages(normalizeMessagesForDisplay(data.messages, isPlanScoped));
       setDraft('');
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '切换会话失败');
@@ -158,11 +245,24 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     setError('');
 
     let conversationId = activeConversationId;
+    const isNewConversation = !conversationId;
     if (!conversationId) {
       try {
         const created = await createConversation();
         conversationId = created.id;
-        setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+
+        let nextScopedConversationIds = scopedConversationIds;
+        if (relatedPlan) {
+          linkConversationToPlan(relatedPlan.id, conversationId);
+          nextScopedConversationIds = Array.from(new Set([...scopedConversationIds, conversationId]));
+          setRelatedConversationIds(nextScopedConversationIds);
+        }
+
+        const nextList = getFilteredConversations(
+          [created, ...conversations.filter((item) => item.id !== created.id)],
+          nextScopedConversationIds
+        );
+        setConversations(nextList);
         setActiveConversationId(conversationId);
         setMessages([]);
       } catch (nextError) {
@@ -194,6 +294,8 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     try {
+      const planContext = relatedPlan ? summarizePlanForPrompt(relatedPlan) : undefined;
+
       await sendConversationMessageStream(
         conversationId,
         content,
@@ -209,24 +311,59 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
             )
           );
         },
-        (plan: StreamPlanPayload, assistantMessage?: string) => {
+        (plan: StreamPlanPayload, nextAssistantMessage?: string) => {
           upsertGeneratedPlan(plan);
+          if (relatedPlan) {
+            linkConversationToPlan(relatedPlan.id, conversationId);
+            setRelatedConversationIds((current) => Array.from(new Set([...current, conversationId])));
+            linkConversationToPlan(plan.id, conversationId);
+          }
           onPlanGenerated?.();
-          if (!assistantMessage) return;
+          if (!nextAssistantMessage) return;
           setMessages((current) =>
             current.map((item) =>
               item.id === assistantId
                 ? {
                     ...item,
-                    content: assistantMessage
+                    content: nextAssistantMessage
                   }
                 : item
             )
           );
+        },
+        (plan: StreamPlanPayload, targetPlanId?: string, nextAssistantMessage?: string) => {
+          upsertGeneratedPlan(plan);
+          if (relatedPlan) {
+            linkConversationToPlan(relatedPlan.id, conversationId);
+            setRelatedConversationIds((current) => Array.from(new Set([...current, conversationId])));
+          }
+          if (targetPlanId && relatedPlan?.id && targetPlanId !== relatedPlan.id) {
+            linkConversationToPlan(targetPlanId, conversationId);
+          }
+          onPlanGenerated?.();
+          if (!nextAssistantMessage) return;
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantId
+                ? {
+                    ...item,
+                    content: nextAssistantMessage
+                  }
+                : item
+            )
+          );
+        },
+        {
+          planContext,
+          targetPlanId: relatedPlan?.id,
+          currentPlan: relatedPlan
         }
       );
 
-      await refreshConversations(conversationId);
+      const refreshIds = relatedPlan
+        ? Array.from(new Set([...scopedConversationIds, conversationId]))
+        : undefined;
+      await refreshConversations(conversationId, refreshIds);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '发送失败，请稍后再试');
       setMessages((current) =>
@@ -249,7 +386,13 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
             </div>
             <div>
               <h2 className="text-base font-semibold">AI 对话框</h2>
-              <p className="text-xs text-muted-foreground mt-1">会话历史已保存到数据库，可创建多个会话。</p>
+              {relatedPlan ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  当前计划：{relatedPlan.name} · 每次进入默认新对话
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-1">会话历史已保存到数据库，可创建多个会话。</p>
+              )}
             </div>
           </div>
           <Button
@@ -303,7 +446,9 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
               );
             })}
             {conversations.length === 0 && (
-              <p className="px-2 py-3 text-xs text-muted-foreground">暂无会话，点击右上角新建。</p>
+              <p className="px-2 py-3 text-xs text-muted-foreground">
+                {relatedPlan ? '暂无关联会话，发送消息后会创建基于该计划的新会话。' : '暂无会话，点击右上角新建。'}
+              </p>
             )}
           </div>
         </div>
@@ -378,9 +523,10 @@ export function TravelChatPanel({ onPlanGenerated }: TravelChatPanelProps) {
 
         <div className="rounded-xl border bg-slate-50 p-3">
           <Textarea
+            ref={textareaRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="输入你想问 AI 的问题..."
+            placeholder="输入你想让 AI 调整的内容..."
             className="min-h-28 bg-white"
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {

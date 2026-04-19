@@ -18,9 +18,10 @@ export interface ConversationMeta {
 export type StreamPlanPayload = TravelPlan;
 
 interface ChatStreamEvent {
-  type?: 'delta' | 'plan' | 'done' | 'error';
+  type?: 'delta' | 'plan' | 'plan_update' | 'done' | 'error';
   delta?: string;
   plan?: StreamPlanPayload;
+  targetPlanId?: string;
   assistantMessage?: string;
   done?: boolean;
   model?: string;
@@ -88,15 +89,37 @@ export async function sendConversationMessageStream(
   conversationId: string,
   message: string,
   onDelta: (chunk: string) => void,
-  onPlan?: (plan: StreamPlanPayload, assistantMessage?: string) => void
+  onPlan?: (plan: StreamPlanPayload, assistantMessage?: string) => void,
+  onPlanUpdate?: (plan: StreamPlanPayload, targetPlanId?: string, assistantMessage?: string) => void,
+  options?: {
+    planContext?: string;
+    targetPlanId?: string;
+    currentPlan?: StreamPlanPayload;
+  }
 ) {
+  const requestBody: {
+    message: string;
+    planContext?: string;
+    targetPlanId?: string;
+    currentPlan?: StreamPlanPayload;
+  } = { message };
+  if (options?.planContext?.trim()) {
+    requestBody.planContext = options.planContext.trim();
+  }
+  if (options?.targetPlanId?.trim()) {
+    requestBody.targetPlanId = options.targetPlanId.trim();
+  }
+  if (options?.currentPlan) {
+    requestBody.currentPlan = options.currentPlan;
+  }
+
   const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream'
     },
-    body: JSON.stringify({ message })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
@@ -140,6 +163,9 @@ export async function sendConversationMessageStream(
       }
       if (payload.type === 'plan' && payload.plan && onPlan) {
         onPlan(payload.plan, payload.assistantMessage);
+      }
+      if (payload.type === 'plan_update' && payload.plan && onPlanUpdate) {
+        onPlanUpdate(payload.plan, payload.targetPlanId, payload.assistantMessage);
       }
       if (typeof payload.delta === 'string' && payload.delta) {
         onDelta(payload.delta);
