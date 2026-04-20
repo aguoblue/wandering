@@ -9,6 +9,7 @@ import { motion } from 'motion/react';
 import { useState } from 'react';
 import { getAllPlans } from '../data/plansStore';
 import { TravelChatPanel } from '../components/TravelChatPanel';
+import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
 export function PlanDetailPage() {
   const { id } = useParams();
@@ -37,7 +38,7 @@ export function PlanDetailPage() {
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       {/* Hero Section */}
       <div className="relative h-80 overflow-hidden">
-        <img 
+        <ImageWithFallback
           src={plan.image} 
           alt={plan.name}
           className="w-full h-full object-cover"

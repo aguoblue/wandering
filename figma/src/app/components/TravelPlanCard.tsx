@@ -3,6 +3,7 @@ import { Badge } from './ui/badge';
 import { Calendar, TrendingUp, Wallet, MapPin } from 'lucide-react';
 import { TravelPlan } from '../data/mockPlans';
 import { Link } from 'react-router';
+import { ImageWithFallback } from './figma/ImageWithFallback';
 
 interface TravelPlanCardProps {
   plan: TravelPlan;
@@ -13,7 +14,7 @@ export function TravelPlanCard({ plan }: TravelPlanCardProps) {
     <Link to={`/plan/${plan.id}`} className="block">
       <Card className="overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
         <div className="relative h-48 overflow-hidden">
-          <img 
+          <ImageWithFallback
             src={plan.image} 
             alt={plan.name}
             className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
