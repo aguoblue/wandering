@@ -1,4 +1,4 @@
-import { mockPlans, TravelPlan } from './mockPlans';
+import { TravelPlan } from './mockPlans';
 
 const GENERATED_PLANS_KEY = 'figma_generated_travel_plans_v1';
 const PLAN_CONVERSATION_LINKS_KEY = 'figma_plan_conversation_links_v2';
@@ -86,7 +86,7 @@ export function linkConversationToPlan(planId: string, conversationId: string) {
 }
 
 export function getAllPlans(): TravelPlan[] {
-  return [...mockPlans, ...loadGeneratedPlans()];
+  return loadGeneratedPlans();
 }
 
 export function upsertGeneratedPlan(plan: TravelPlan): TravelPlan[] {

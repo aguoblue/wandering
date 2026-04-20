@@ -34,7 +34,7 @@ export const AI_PLAN_SYSTEM_PROMPT = `你是一个“旅行数据生成器”，
 关键约束（必须满足）：
 1. 只输出 JSON 数组：以 "[" 开始，以 "]" 结束；不要输出 Markdown，不要解释，不要代码围栏。
 2. 必须是合法 JSON（双引号字符串、无注释、无尾随逗号）。
-3. coordinates 顺序必须是 [纬度, 经度]（非常重要，不是 [经度, 纬度]）。
+3. coordinates 顺序必须是 [经度, 纬度]（非常重要，不是 [纬度, 经度]）。
 4. period 只能使用：上午、中午、下午、晚上；不要出现其他词。
 5. time 必须与 period 语义一致。
 6. 每个 day 的 activities 按 time 升序排列，不重叠。
@@ -82,6 +82,6 @@ export function buildAiPlanUserPrompt(input: BuildAiPromptInput) {
 - name 要有吸引力且不重复
 - highlight 一句话概括卖点
 - 避免生成重复 POI 组合
-- coordinates 必须是 [纬度, 经度]
+- coordinates 必须是 [经度, 纬度]
 - period 仅可用：上午、中午、下午、晚上`;
 }

@@ -56,7 +56,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2-3小时',
             transport: '步行为主，可租自行车',
             alternatives: ['白堤 + 孤山', '杨公堤（更清静）'],
-            coordinates: [30.2444, 120.1458]
+            coordinates: [120.1458, 30.2444]
           },
           {
             id: '1-2',
@@ -68,7 +68,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1-1.5小时',
             transport: '从苏堤步行15分钟',
             alternatives: ['知味观（老字号）', '绿茶餐厅'],
-            coordinates: [30.2536, 120.1562]
+            coordinates: [120.1562, 30.2536]
           },
           {
             id: '1-3',
@@ -80,7 +80,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2-3小时',
             transport: '从湖滨区乘公交或打车10分钟',
             alternatives: ['中国丝绸博物馆', '中国茶叶博物馆'],
-            coordinates: [30.2511, 120.1387]
+            coordinates: [120.1387, 30.2511]
           },
           {
             id: '1-4',
@@ -92,7 +92,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行即可到达',
             alternatives: ['灵隐寺夜游', '钱江新城灯光秀'],
-            coordinates: [30.2550, 120.1590]
+            coordinates: [120.1590, 30.2550]
           }
         ]
       },
@@ -110,7 +110,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2-3小时',
             transport: '从市区打车或乘7路公交',
             alternatives: ['法喜寺（网红寺庙）', '净慈寺'],
-            coordinates: [30.2416, 120.0985]
+            coordinates: [120.0985, 30.2416]
           },
           {
             id: '2-2',
@@ -122,7 +122,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1.5小时',
             transport: '从灵隐寺乘公交或打车15分钟',
             alternatives: ['梅家坞茶村', '九溪烟树附近餐厅'],
-            coordinates: [30.2380, 120.1180]
+            coordinates: [120.1180, 30.2380]
           },
           {
             id: '2-3',
@@ -134,7 +134,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行10分钟',
             alternatives: ['九溪十八涧（徒步路线）', '虎跑公园'],
-            coordinates: [30.2115, 120.1170]
+            coordinates: [120.1170, 30.2115]
           },
           {
             id: '2-4',
@@ -146,7 +146,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1.5小时',
             transport: '乘公交返回市区',
             alternatives: ['南宋御街', '湖滨银泰购物'],
-            coordinates: [30.2463, 120.1653]
+            coordinates: [120.1653, 30.2463]
           }
         ]
       }
@@ -177,7 +177,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '4小时',
             transport: '地铁1号线天安门东站',
             alternatives: ['国家博物馆', '景山公园（俯瞰故宫）'],
-            coordinates: [39.9163, 116.3972]
+            coordinates: [116.3972, 39.9163]
           },
           {
             id: '3-2',
@@ -189,7 +189,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1.5小时',
             transport: '从故宫步行15分钟',
             alternatives: ['全聚德烤鸭', '东来顺涮羊肉'],
-            coordinates: [39.9144, 116.4144]
+            coordinates: [116.4144, 39.9144]
           },
           {
             id: '3-3',
@@ -201,7 +201,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '乘地铁或公交20分钟',
             alternatives: ['鼓楼 + 烟袋斜街', '恭王府'],
-            coordinates: [39.9392, 116.3908]
+            coordinates: [116.3908, 39.9392]
           }
         ]
       },
@@ -219,7 +219,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '6-7小时（含往返）',
             transport: '报一日游或包车前往（2小时车程）',
             alternatives: ['八达岭长城', '金山岭长城'],
-            coordinates: [40.4319, 116.5704]
+            coordinates: [116.5704, 40.4319]
           },
           {
             id: '4-2',
@@ -231,7 +231,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '地铁10号线',
             alternatives: ['簋街（宵夜）', '五道口（大学氛围）'],
-            coordinates: [39.9371, 116.4550]
+            coordinates: [116.4550, 39.9371]
           }
         ]
       },
@@ -249,7 +249,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '地铁4号线北宫门站',
             alternatives: ['圆明园遗址', '香山公园'],
-            coordinates: [40.0009, 116.2753]
+            coordinates: [116.2753, 40.0009]
           },
           {
             id: '5-2',
@@ -261,7 +261,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1-2小时',
             transport: '地铁4号线',
             alternatives: ['清华/北大食堂体验', '五道营胡同'],
-            coordinates: [39.9787, 116.3142]
+            coordinates: [116.3142, 39.9787]
           },
           {
             id: '5-3',
@@ -273,7 +273,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '地铁14号线',
             alternatives: ['清华大学校园', '北京大学未名湖'],
-            coordinates: [39.9845, 116.4964]
+            coordinates: [116.4964, 39.9845]
           }
         ]
       }
@@ -304,7 +304,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '地铁10号线豫园站',
             alternatives: ['老码头', '新天地'],
-            coordinates: [31.2287, 121.4920]
+            coordinates: [121.4920, 31.2287]
           },
           {
             id: '6-2',
@@ -316,7 +316,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '地铁9号线打浦桥站',
             alternatives: ['思南公馆', '武康路'],
-            coordinates: [31.2104, 121.4707]
+            coordinates: [121.4707, 31.2104]
           },
           {
             id: '6-3',
@@ -328,7 +328,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '地铁2号线南京东路站',
             alternatives: ['陆家嘴观光厅', '东方明珠'],
-            coordinates: [31.2397, 121.4900]
+            coordinates: [121.4900, 31.2397]
           }
         ]
       },
@@ -346,7 +346,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '地铁1/2/8号线人民广场站',
             alternatives: ['上海自然博物馆', '中华艺术宫'],
-            coordinates: [31.2281, 121.4747]
+            coordinates: [121.4747, 31.2281]
           },
           {
             id: '7-2',
@@ -358,7 +358,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3-4小时',
             transport: '地铁2号线陆家嘴站',
             alternatives: ['环球金融中心观光厅', '滨江大道散步'],
-            coordinates: [31.2352, 121.5058]
+            coordinates: [121.5058, 31.2352]
           },
           {
             id: '7-3',
@@ -370,7 +370,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '地铁1/2号线人民广场站',
             alternatives: ['淮海路', '徐家汇'],
-            coordinates: [31.2361, 121.4776]
+            coordinates: [121.4776, 31.2361]
           }
         ]
       }
@@ -401,7 +401,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3-4小时',
             transport: '包车前往杨堤码头（1小时）',
             alternatives: ['漓江游船（桂林-阳朔）', '相公山日出'],
-            coordinates: [24.8964, 110.4779]
+            coordinates: [110.4779, 24.8964]
           },
           {
             id: '8-2',
@@ -413,7 +413,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '1.5小时',
             transport: '步行',
             alternatives: ['老根啤酒鱼', '大师傅啤酒鱼'],
-            coordinates: [24.8889, 110.5008]
+            coordinates: [110.5008, 24.8889]
           },
           {
             id: '8-3',
@@ -425,7 +425,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '从兴坪乘车到阳朔（30分钟）',
             alternatives: ['工农桥看日落', '阳朔书童山'],
-            coordinates: [24.7758, 110.4973]
+            coordinates: [110.4973, 24.7758]
           },
           {
             id: '8-4',
@@ -437,7 +437,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '从西街打车10分钟',
             alternatives: ['西街夜市', '遇龙河夜游'],
-            coordinates: [24.7836, 110.4695]
+            coordinates: [110.4695, 24.7836]
           }
         ]
       },
@@ -455,7 +455,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2-3小时',
             transport: '包车或骑车前往',
             alternatives: ['遇龙河骑行', '富里桥-遇龙桥段'],
-            coordinates: [24.8436, 110.4189]
+            coordinates: [110.4189, 24.8436]
           },
           {
             id: '9-2',
@@ -467,7 +467,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2-3小时',
             transport: '从阳朔包车前往（30分钟）',
             alternatives: ['芦笛岩', '冠岩'],
-            coordinates: [25.0417, 110.3764]
+            coordinates: [110.3764, 25.0417]
           },
           {
             id: '9-3',
@@ -479,7 +479,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行',
             alternatives: ['漓江边散步', '攀岩体验'],
-            coordinates: [24.7758, 110.4973]
+            coordinates: [110.4973, 24.7758]
           }
         ]
       },
@@ -497,7 +497,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '3小时',
             transport: '从阳朔返回桂林（1.5小时）',
             alternatives: ['叠彩山', '伏波山'],
-            coordinates: [25.2691, 110.2819]
+            coordinates: [110.2819, 25.2691]
           },
           {
             id: '10-2',
@@ -509,7 +509,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行',
             alternatives: ['尚水美食街', '万达广场'],
-            coordinates: [25.2779, 110.2897]
+            coordinates: [110.2897, 25.2779]
           },
           {
             id: '10-3',
@@ -521,7 +521,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行',
             alternatives: ['日月双塔', '靖江王城'],
-            coordinates: [25.2833, 110.2908]
+            coordinates: [110.2908, 25.2833]
           }
         ]
       }
@@ -552,7 +552,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2.5小时',
             transport: '地铁2号线至蛇口港站，步行5分钟',
             alternatives: ['深圳湾公园', '前海滨河公园'],
-            coordinates: [22.5089, 113.9244]
+            coordinates: [113.9244, 22.5089]
           },
           {
             id: '1-2',
@@ -564,7 +564,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '步行10分钟',
             alternatives: ['海上世界餐饮街', '南海意库美食广场'],
-            coordinates: [22.5012, 113.9156]
+            coordinates: [113.9156, 22.5012]
           },
           {
             id: '1-3',
@@ -576,7 +576,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2.5小时',
             transport: '打车或步行15分钟',
             alternatives: ['华侨城创意园', '大芬油画村'],
-            coordinates: [22.5078, 113.9089]
+            coordinates: [113.9089, 22.5078]
           },
           {
             id: '1-4',
@@ -588,7 +588,7 @@ export const mockPlans: TravelPlan[] = [
             duration: '2小时',
             transport: '地铁9号线至深圳湾公园站',
             alternatives: ['小梅沙海滨公园', '东部华侨城茶溪谷'],
-            coordinates: [22.5329, 113.9289]
+            coordinates: [113.9289, 22.5329]
           }
         ]
       }

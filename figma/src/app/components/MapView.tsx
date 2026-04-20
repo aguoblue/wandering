@@ -17,6 +17,9 @@ interface RouteSegment {
   end: number;
 }
 
+type Coordinate = [number, number];
+const SEGMENT_COLORS = ['#2563eb', '#0ea5e9', '#06b6d4', '#14b8a6', '#22c55e', '#eab308'];
+
 // 根据时间段设置不同颜色
 const getPeriodColor = (period: string) => {
   switch (period) {
@@ -130,7 +133,9 @@ const getMarkerContent = (index: number, markerColor: string, state: MarkerFocus
   return `<div style="width:26px;height:26px;border-radius:999px;background:${markerColor};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:${stateStyle.border};box-shadow:${stateStyle.boxShadow};opacity:${stateStyle.opacity};transform:scale(${stateStyle.scale});filter:${stateStyle.filter};transition:all .18s ease;">${index + 1}</div>`;
 };
 
-const getSegmentStyle = (state: SegmentFocusState) => {
+const getSegmentColor = (index: number) => SEGMENT_COLORS[index % SEGMENT_COLORS.length];
+
+const getSegmentStyle = (state: SegmentFocusState, color: string) => {
   if (state === 'active') {
     return {
       strokeColor: '#1d4ed8',
@@ -143,7 +148,7 @@ const getSegmentStyle = (state: SegmentFocusState) => {
 
   if (state === 'related') {
     return {
-      strokeColor: '#2563eb',
+      strokeColor: color,
       strokeWeight: 7,
       strokeOpacity: 0.95,
       zIndex: 75,
@@ -153,7 +158,7 @@ const getSegmentStyle = (state: SegmentFocusState) => {
 
   if (state === 'hovered') {
     return {
-      strokeColor: '#3b82f6',
+      strokeColor: color,
       strokeWeight: 7,
       strokeOpacity: 0.95,
       zIndex: 80,
@@ -172,7 +177,7 @@ const getSegmentStyle = (state: SegmentFocusState) => {
   }
 
   return {
-    strokeColor: '#2563eb',
+    strokeColor: color,
     strokeWeight: 5,
     strokeOpacity: 0.85,
     zIndex: 60,
@@ -182,6 +187,64 @@ const getSegmentStyle = (state: SegmentFocusState) => {
 
 const getInfoWindowContent = (activity: Activity) => {
   return `<div style="padding:4px 2px;line-height:1.6;"><strong>${activity.title}</strong><br/>${activity.time} · ${activity.period}</div>`;
+};
+
+const normalizeCoordinate = (value: unknown): Coordinate | null => {
+  if (Array.isArray(value) && value.length >= 2) {
+    const lng = Number(value[0]);
+    const lat = Number(value[1]);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) return [lng, lat];
+    return null;
+  }
+
+  if (value && typeof value === 'object') {
+    const candidate = value as {
+      lng?: unknown;
+      lat?: unknown;
+      getLng?: () => unknown;
+      getLat?: () => unknown;
+    };
+
+    const lngCandidate = typeof candidate.getLng === 'function' ? candidate.getLng() : candidate.lng;
+    const latCandidate = typeof candidate.getLat === 'function' ? candidate.getLat() : candidate.lat;
+    const lng = Number(lngCandidate);
+    const lat = Number(latCandidate);
+
+    if (Number.isFinite(lng) && Number.isFinite(lat)) {
+      return [lng, lat];
+    }
+  }
+
+  return null;
+};
+
+const getDrivingPath = (drivingResult: unknown, fallback: Coordinate[]) => {
+  if (!drivingResult || typeof drivingResult !== 'object') return fallback;
+
+  const routes = (drivingResult as { routes?: unknown[] }).routes;
+  if (!Array.isArray(routes) || routes.length === 0) return fallback;
+
+  const firstRoute = routes[0] as { steps?: unknown[] } | undefined;
+  const steps = firstRoute?.steps;
+  if (!Array.isArray(steps) || steps.length === 0) return fallback;
+
+  const mergedPath: Coordinate[] = [];
+  steps.forEach((step) => {
+    const stepPath = (step as { path?: unknown[] }).path;
+    if (!Array.isArray(stepPath)) return;
+
+    stepPath.forEach((point) => {
+      const normalized = normalizeCoordinate(point);
+      if (!normalized) return;
+
+      const previous = mergedPath[mergedPath.length - 1];
+      if (!previous || previous[0] !== normalized[0] || previous[1] !== normalized[1]) {
+        mergedPath.push(normalized);
+      }
+    });
+  });
+
+  return mergedPath.length >= 2 ? mergedPath : fallback;
 };
 
 export function MapView({ activities, planName }: MapViewProps) {
@@ -202,7 +265,7 @@ export function MapView({ activities, planName }: MapViewProps) {
   const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE;
 
   const points = useMemo(
-    () => activities.map((activity) => [activity.coordinates[1], activity.coordinates[0]] as [number, number]),
+    () => activities.map((activity) => [activity.coordinates[0], activity.coordinates[1]] as [number, number]),
     [activities]
   );
 
@@ -276,7 +339,7 @@ export function MapView({ activities, planName }: MapViewProps) {
     segmentRefs.current.forEach(({ polyline, start }) => {
       if (!polyline) return;
       const segmentState = getSegmentFocusState(start, selectedIndex, selectedSegmentStart, hoveredSegmentStart);
-      polyline.setOptions(getSegmentStyle(segmentState));
+      polyline.setOptions(getSegmentStyle(segmentState, getSegmentColor(start)));
     });
   }, [activities, hoveredSegmentStart, selectedIndex, selectedSegmentStart]);
 
@@ -303,9 +366,9 @@ export function MapView({ activities, planName }: MapViewProps) {
     AMapLoader.load({
       key: amapKey,
       version: '2.0',
-      plugins: ['AMap.Scale', 'AMap.ToolBar']
+      plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.Driving']
     })
-      .then((AMap) => {
+      .then(async (AMap) => {
         if (destroyed || !containerRef.current) return;
 
         map = new AMap.Map(containerRef.current, {
@@ -322,6 +385,9 @@ export function MapView({ activities, planName }: MapViewProps) {
           offset: new AMap.Pixel(0, -24)
         });
         infoWindowRef.current = infoWindow;
+        const driving = new AMap.Driving({
+          policy: AMap.DrivingPolicy.LEAST_TIME
+        });
 
         const markerList = activities.map((activity, index) => {
           const markerColor = getPeriodColor(activity.period);
@@ -350,14 +416,33 @@ export function MapView({ activities, planName }: MapViewProps) {
           return marker;
         });
 
+        const routePaths = await Promise.all(
+          points.slice(0, -1).map((startPoint, index) => {
+            const endPoint = points[index + 1];
+            const fallbackPath: Coordinate[] = [startPoint, endPoint];
+
+            return new Promise<Coordinate[]>((resolve) => {
+              driving.search(startPoint, endPoint, (status: string, result: unknown) => {
+                if (status !== 'complete') {
+                  resolve(fallbackPath);
+                  return;
+                }
+                resolve(getDrivingPath(result, fallbackPath));
+              });
+            });
+          })
+        );
+
+        if (destroyed) return;
+
         const segments: RouteSegment[] = [];
         for (let i = 0; i < points.length - 1; i += 1) {
           const polyline = new AMap.Polyline({
             map,
-            path: [points[i], points[i + 1]],
+            path: routePaths[i] || [points[i], points[i + 1]],
             lineJoin: 'round',
             lineCap: 'round',
-            ...getSegmentStyle('normal')
+            ...getSegmentStyle('normal', getSegmentColor(i))
           });
 
           polyline.on('mouseover', () => {
@@ -469,9 +554,9 @@ export function MapView({ activities, planName }: MapViewProps) {
             <div className="absolute top-3 left-3 pointer-events-none">
               <div className="flex items-center gap-2 mb-3">
                 <MapPin className="size-5 text-blue-600" />
-                <h3 className="font-semibold">高德路线预览</h3>
+                <h3 className="font-semibold">高德驾车路线预览</h3>
               </div>
-              <p className="text-sm text-muted-foreground">点击点位看活动，点击线路看路段详情，点击空白重置</p>
+              <p className="text-sm text-muted-foreground">路线优先按驾车规划绘制，失败时回退直线。点击空白可重置</p>
             </div>
 
             {selectedSegmentDetails && (
@@ -607,7 +692,7 @@ export function MapView({ activities, planName }: MapViewProps) {
                       <Navigation className="size-3" />
                       <span>{activity.duration}</span>
                     </div>
-                    <div>📍 {activity.coordinates[0].toFixed(4)}, {activity.coordinates[1].toFixed(4)}</div>
+                    <div>📍 经度 {activity.coordinates[0].toFixed(4)}, 纬度 {activity.coordinates[1].toFixed(4)}</div>
                   </div>
                 </div>
               </button>

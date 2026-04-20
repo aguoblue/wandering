@@ -1,3 +1,8 @@
+# 20260420 figma 计划列表移除 mock 数据源
+
+1. **计划聚合改为仅真实数据**：`figma/src/app/data/plansStore.ts` 的 `getAllPlans` 不再拼接 `mockPlans`，仅返回 `localStorage` 中的 `figma_generated_travel_plans_v1` 数据。
+2. **mock 类型保留**：仍复用 `mockPlans.ts` 中的 `TravelPlan` 类型定义，避免影响现有组件类型约束。
+
 # 20260420 figma 计划会话改为“仅计划页新建才绑定”
 
 1. **首页对话不再自动绑定计划**：`figma/src/app/components/TravelChatPanel.tsx` 在首页模式收到 `plan` 事件时，仅 `upsertGeneratedPlan` 存计划，不再把“生成计划的首页会话”回链到计划。
@@ -414,3 +419,15 @@
 
 1. **点击地图先清理覆盖物**：`my-app/src/components/AmapMap.jsx` 新增 `clearAllMapOverlays`，点击地图选点前会清除已有 marker、路线与地铁 route service，并重置当前焦点与路线选择状态。
 2. **地图点击仅保留当前点**：`displayLocation` 新增 `replaceExisting` 参数，`handleMapClick` 传入 `{ replaceExisting: true }`，实现“点击新点 -> 清空旧点 -> 居中并落新 marker”的单点展示行为。
+
+# 20260420 figma 计划坐标顺序统一为经度在前
+
+1. **坐标规范调整**：将计划数据 `coordinates` 语义从 `[纬度, 经度]` 统一为 `[经度, 纬度]`，并同步更新 `figma/src/app/data/aiPlanPrompts.ts`、`figma/server/ai_server.py`、`figma/server/ai-server.mjs` 中的约束文案。
+2. **地图渲染逻辑同步**：`figma/src/app/components/MapView.tsx` 改为按 `[经度, 纬度]` 直接生成高德点位，不再做前后反转；列表里的坐标展示改为“经度/纬度”明确标识。
+3. **内置示例数据迁移**：`figma/src/app/data/mockPlans.ts` 全量 `coordinates` 数据改为 `[经度, 纬度]`，避免新旧规则混用导致点位偏移。
+
+# 20260420 figma 计划页路线改为高德驾车分段并增加多色渲染
+
+1. **路线来源升级**：`figma/src/app/components/MapView.tsx` 接入 `AMap.Driving`，按相邻活动点逐段请求驾车路线，优先绘制真实道路轨迹。
+2. **稳定性兜底**：单段驾车规划失败时回退到起终点直线，确保路线总能展示，不因某段异常导致地图空白。
+3. **可读性增强**：新增分段色板，默认不同路段使用不同颜色；选中路段仍保持深蓝高亮，兼顾区分度与交互聚焦。
