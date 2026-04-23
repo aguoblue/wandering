@@ -1,3 +1,10 @@
+# 20260420 主应用提升到仓库根目录并移除 my-app
+
+1. **主应用目录扁平化**：将原 `my-app/` 下的 Vite + React + 高德地图主应用迁移到仓库根目录，主入口改为根目录 `index.html`、`src/`、`public/`、`package.json` 等文件。
+2. **移除旧目录**：删除 `my-app/` 目录及其遗留构建产物、依赖目录和说明文件，避免后续开发继续在旧路径下操作。
+3. **仓库说明同步更新**：更新 `README.md` 与 `AGENTS.md` 中的运行、构建、环境变量和目录说明，使文档与新的根目录结构保持一致。
+4. **保留旧 demo 备份**：原根目录独立 demo 页面改名为 `standalone-demo.html`，避免覆盖时丢失。
+
 # 20260420 figma 后端高德 Key 配置分离（优先 AMAP_WEB_KEY）
 
 1. **后端 Key 读取顺序升级**：`figma/server/ai_server.py` 新增 `get_amap_key_with_source`，后端调用高德 REST API 时优先读取 `AMAP_WEB_KEY`（env/.env），其次 `AMAP_KEY`，最后才回退 `VITE_AMAP_KEY`。

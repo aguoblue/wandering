@@ -1,5 +1,21 @@
 .cursor/
 
+# App deps/build output
+node_modules/
+dist/
+dist-ssr/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.local
+.env
+.DS_Store
+.idea
+
 # Python cache
 __pycache__/
 *.py[cod]
