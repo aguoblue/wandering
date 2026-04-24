@@ -1,3 +1,28 @@
+# 20260424 my-app 计划生成后自动调用 Pexels 获取封面图
+
+1. **后端封面图来源升级**：`my-app/server/ai_server.py` 在计划生成/更新后设置 `plan.image` 时，改为优先调用 `Pexels Search API` 获取横图链接（`large2x/large/landscape/original`）。
+2. **配置读取**：新增 `PEXELS_API_KEY` 读取（环境变量优先，其次 `my-app/.env`），无需改前端。
+3. **稳定性与兜底**：保留原有 Unsplash Source URL 作为回退；当 Pexels 请求失败、403 或无结果时自动回退，不影响计划生成流程。
+4. **性能优化**：新增简单内存缓存，按 `destination + name + keywords` 复用已选封面，减少重复调用。
+
+# 20260424 my-app 新增 Pexels 封面图抓取测试脚本
+
+1. **新增脚本**：`my-app/server/scripts/test_pexels_cover.py`，用于按关键词调用 Pexels API 并输出第一张横版图片链接，便于验证“计划自动封面图”链路。
+2. **配置读取**：脚本支持从环境变量或 `my-app/.env` 读取 `PEXELS_API_KEY`。
+3. **无三方依赖**：使用 Python 标准库 `urllib` 发起请求，无需额外安装 `requests`。
+
+# 20260424 新增小红书笔记抓取脚本（Playwright）
+
+1. **新增脚本**：在仓库根目录新增 `xhs_scrape_note.py`，内置指定小红书笔记链接并使用 `playwright` 打开页面抓取正文。
+2. **抓取稳定性增强**：增加 `networkidle` 等待与多选择器兜底（`div.note-content` 等），降低前端结构波动导致的抓取失败概率。
+3. **失败可诊断**：脚本输出常见失败原因提示（登录态、风控、选择器变化、网络受限），便于后续排查。
+
+# 20260424 figma 目录重命名为 my-app
+
+1. **目录重命名**：将仓库中的 `figma/` 目录重命名为 `my-app/`，便于与当前项目命名保持一致。
+2. **README 同步**：更新 `README.md` 中的目录说明、运行命令与构建命令，将 `cd figma` 调整为 `cd my-app`。
+3. **历史说明**：`history.md` 中旧条目保留原始记录语义；若条目中出现 `figma/` 路径，按当前目录可对应理解为 `my-app/`。
+
 # 20260424 figma 对话框新增语音输入按钮（话筒）
 
 1. **改动位置修正到 figma 项目**：在 `figma/src/app/components/TravelChatPanel.tsx` 的输入区，将话筒按钮加入到“发送”按钮旁边，匹配对话框交互预期。

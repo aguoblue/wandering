@@ -12,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote_plus, urlencode
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from anthropic import Anthropic
 import uvicorn
@@ -747,6 +748,7 @@ POI_TYPE_HINTS = (
 
 UNSPLASH_SOURCE_BASE = "https://source.unsplash.com"
 IMAGE_FALLBACK_URL = "https://picsum.photos/seed/wandering-plan-cover/1600/900"
+PEXELS_SEARCH_API = "https://api.pexels.com/v1/search"
 GENERIC_IMAGE_KEYWORDS = {
     "旅行",
     "旅游",
@@ -761,6 +763,7 @@ GENERIC_IMAGE_KEYWORDS = {
     "轻松",
     "深度",
 }
+_plan_cover_cache: dict[str, str] = {}
 
 
 def stable_text_hash(value: str) -> int:
@@ -835,13 +838,119 @@ def build_unsplash_source_url(keywords: list[str], seed: int) -> str:
     return f"{UNSPLASH_SOURCE_BASE}/1600x900/?{encoded_keywords}&sig={sig}"
 
 
+def get_pexels_api_key_with_source() -> tuple[str, str]:
+    env_map = load_frontend_env()
+    candidates = [
+        ("env:PEXELS_API_KEY", os.environ.get("PEXELS_API_KEY", "")),
+        ("file:.env PEXELS_API_KEY", env_map.get("PEXELS_API_KEY", "")),
+    ]
+    for source, value in candidates:
+        if value and value.strip():
+            return value.strip(), source
+    return "", "missing"
+
+
+def build_pexels_query(keywords: list[str]) -> str:
+    if not keywords:
+        return "travel city landmark"
+    return " ".join(keywords[:4])
+
+
+def mask_secret(value: str) -> str:
+    token = (value or "").strip()
+    if len(token) < 10:
+        return "***"
+    return f"{token[:4]}...{token[-4:]}"
+
+
+def request_pexels_cover_url(*, api_key: str, query: str) -> str:
+    params = urlencode(
+        {
+            "query": query,
+            "per_page": 5,
+            "page": 1,
+            "orientation": "landscape",
+        }
+    )
+    request = Request(
+        f"{PEXELS_SEARCH_API}?{params}",
+        headers={
+            "Authorization": api_key,
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36",
+        },
+        method="GET",
+    )
+
+    try:
+        with urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        try:
+            error_body = error.read().decode("utf-8", errors="replace")
+        except Exception:
+            error_body = "<empty>"
+        logger.warning(
+            "pexels search http error | code=%s | query=%s | body=%s",
+            getattr(error, "code", "?"),
+            query,
+            error_body[:240],
+        )
+        return ""
+    except Exception:
+        logger.exception("pexels search request failed | query=%s", query)
+        return ""
+
+    photos = payload.get("photos") if isinstance(payload, dict) else None
+    if not isinstance(photos, list):
+        return ""
+
+    for photo in photos:
+        if not isinstance(photo, dict):
+            continue
+        src = photo.get("src")
+        if not isinstance(src, dict):
+            continue
+        for key in ("large2x", "large", "landscape", "original"):
+            candidate = src.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return ""
+
+
 def select_plan_image_url(plan: dict[str, Any]) -> str:
     plan_id = str(plan.get("id", "")).strip()
     name = str(plan.get("name", "")).strip()
     destination = str(plan.get("destination", "")).strip()
     seed = stable_text_hash(f"{plan_id}|{name}|{destination}")
     keywords = build_plan_image_keywords(plan)
-    return build_unsplash_source_url(keywords, seed)
+    cache_key = f"{destination}|{name}|{'|'.join(keywords[:4])}".lower().strip()
+    if cache_key and cache_key in _plan_cover_cache:
+        return _plan_cover_cache[cache_key]
+
+    pexels_key, pexels_key_source = get_pexels_api_key_with_source()
+    if pexels_key:
+        query = build_pexels_query(keywords)
+        pexels_url = request_pexels_cover_url(api_key=pexels_key, query=query)
+        if pexels_url:
+            if cache_key:
+                _plan_cover_cache[cache_key] = pexels_url
+            logger.info(
+                "plan image selected from pexels | plan_id=%s | destination=%s | query=%s | key_source=%s | key=%s",
+                plan_id,
+                destination,
+                query,
+                pexels_key_source,
+                mask_secret(pexels_key),
+            )
+            return pexels_url
+
+    fallback = build_unsplash_source_url(keywords, seed)
+    if cache_key and fallback:
+        _plan_cover_cache[cache_key] = fallback
+    return fallback
 
 
 def attach_selected_plan_image(plan: dict[str, Any]) -> dict[str, Any]:

@@ -16,18 +16,22 @@ lerna-debug.log*
 .DS_Store
 .idea
 
+# Local scraping/debug artifacts
+xhs_debug.*
+xhs_scrape_note.py
+
 # Python cache
 __pycache__/
 *.py[cod]
 
-# figma app: keep source, ignore local deps/build output
-figma/node_modules/
-figma/dist/
-figma/.DS_Store
-figma/*.log
-figma/server/logs/
-figma/server/**/*.log
-figma/server/**/*.db
-figma/.env
-figma/.env.local
-figma/.env.*.local
+# my-app: keep source, ignore local deps/build output
+my-app/node_modules/
+my-app/dist/
+my-app/.DS_Store
+my-app/*.log
+my-app/server/logs/
+my-app/server/**/*.log
+my-app/server/**/*.db
+my-app/.env
+my-app/.env.local
+my-app/.env.*.local
