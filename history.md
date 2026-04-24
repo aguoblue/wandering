@@ -513,3 +513,27 @@
 1. **新增选图服务**：`figma/server/ai_server.py` 增加轻量选图逻辑，不再直接信任模型返回的 `image` 字段，而是基于目的地、计划名、标签与活动地点关键词生成稳定的 Unsplash Source URL。
 2. **生成与更新统一**：新建计划（`generate_plan_from_draft`）和编辑计划（`update_plan_from_existing`）都会统一执行选图服务，确保封面图风格与行程更相关且来源一致。
 3. **前端兜底增强**：`TravelPlanCard` 与 `PlanDetailPage` 的图片渲染切换为 `ImageWithFallback`，当外链异常时可自动显示占位图，避免页面出现破图。
+
+# 20260424 figma 高德补点改为串行检索并增加请求节流
+
+1. **串行检索策略**：`figma/server/ai_server.py` 的 POI 解析从“先收集 strict+relaxed 再统一评分”改为严格分阶段执行：先 `city_limit=true`，不达标才查 `city_limit=false`，最后才走 `around` 兜底。
+2. **请求节流**：新增 `AI_SERVER_AMAP_REQUEST_MIN_INTERVAL_MS`（默认 `220ms`）控制高德请求最小间隔，避免短时间连续请求触发 `CUQPS_HAS_EXCEEDED_THE_LIMIT`。
+3. **行为结果**：每次地点解析都会一个一个请求并根据上一步结果决定是否继续，降低错误匹配概率，减少“地点文本和地图点不一致”的偏差问题。
+
+# 20260424 figma 高德限流重试机制
+
+1. **限流自动重试**：`figma/server/ai_server.py` 在高德返回 `infocode=10021`（QPS 超限）时，自动等待 `0.5s` 后重试，最多重试 `3` 次。
+2. **仅针对限流码**：重试逻辑只对 `10021` 生效，其他错误保持原有处理路径，避免无意义重试拖慢整体响应。
+3. **可配置参数**：新增 `AI_SERVER_AMAP_RETRY_ON_QPS_LIMIT`（默认 `3`）与 `AI_SERVER_AMAP_RETRY_DELAY_SECONDS`（默认 `0.5`），便于按配额策略调整。
+
+# 20260424 figma 新增高德地名测试脚本
+
+1. **新增脚本**：`figma/server/scripts/test_amap_place_text.py`，支持输入地名关键词后直接调用高德 `v5/place/text`，用于快速验证“输入词会命中哪些 POI”。
+2. **参数能力**：支持 `--region`、`--city-limit true|false|both`、`--raw`、`--interactive`，既可单次测试也可连续交互测试多个关键词。
+3. **一致性对齐**：脚本与服务端保持同样的 key 读取优先级（`AMAP_WEB_KEY/AMAP_KEY/VITE_AMAP_KEY`），并默认读取 `figma/.env`。
+
+# 20260424 figma 八卦城目的地归一化与区域词校验
+
+1. **目的地归一化**：`figma/server/ai_server.py` 新增 `normalize_amap_destination`，当目的地包含“八卦城/特克斯”时，统一使用 `新疆` 作为高德 `region` 查询值。
+2. **区域词过滤**：新增 `poi_matches_region_terms`，对文本检索候选强制校验 `新疆/伊犁/特克斯` 区域词，避免命中北京/香港等跨区域 POI。
+3. **匹配策略联动**：`search_amap_poi_coordinates` 的 `text_strict/text_relaxed` 均启用区域词过滤，且评分环节使用归一化后的目的地文本，提升本地相关性。

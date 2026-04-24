@@ -135,6 +135,19 @@ LOG_AMAP_MATCH_DEBUG = os.environ.get("AI_SERVER_LOG_AMAP_MATCH", "").lower() in
     "yes",
     "on",
 }
+AMAP_REQUEST_MIN_INTERVAL_MS = max(
+    0,
+    int(os.environ.get("AI_SERVER_AMAP_REQUEST_MIN_INTERVAL_MS", "220")),
+)
+AMAP_RETRY_ON_QPS_LIMIT = max(
+    0,
+    int(os.environ.get("AI_SERVER_AMAP_RETRY_ON_QPS_LIMIT", "3")),
+)
+AMAP_RETRY_DELAY_SECONDS = max(
+    0.0,
+    float(os.environ.get("AI_SERVER_AMAP_RETRY_DELAY_SECONDS", "0.5")),
+)
+_LAST_AMAP_REQUEST_TS = 0.0
 DEFAULT_CONVERSATION_STATE = "normal_chat"
 DEFAULT_PLAN_DRAFT_JSON = "{}"
 DEFAULT_PENDING_ACTION_JSON = "{}"
@@ -872,6 +885,33 @@ def parse_amap_location(value: Any) -> tuple[float, float] | None:
         return None
 
 
+def normalize_amap_destination(destination: str) -> tuple[str, list[str]]:
+    normalized = str(destination or "").strip()
+    if not normalized:
+        return "", []
+
+    # "八卦城"在旅游语境里通常指新疆特克斯八卦城，直接用"新疆"作为查询区域更稳定。
+    if "八卦城" in normalized:
+        return "新疆", ["新疆", "伊犁", "特克斯"]
+
+    if "特克斯" in normalized:
+        return "新疆", ["新疆", "伊犁", "特克斯"]
+
+    return normalized, []
+
+
+def poi_matches_region_terms(poi: dict[str, Any], region_terms: list[str]) -> bool:
+    if not region_terms:
+        return True
+    name = str(poi.get("name", "")).strip()
+    address = str(poi.get("address", "")).strip()
+    pname = str(poi.get("pname", "")).strip()
+    cityname = str(poi.get("cityname", "")).strip()
+    adname = str(poi.get("adname", "")).strip()
+    haystack = f"{name} {address} {pname} {cityname} {adname}"
+    return any(term and term in haystack for term in region_terms)
+
+
 def score_amap_poi(
     *,
     poi: dict[str, Any],
@@ -937,24 +977,50 @@ def score_amap_poi(
 
 
 def request_amap_json(url: str) -> dict[str, Any] | None:
-    try:
-        with urlopen(url, timeout=6) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if isinstance(payload, dict):
-            if str(payload.get("status", "")) not in {"1", "true", "True"}:
-                logger.warning(
-                    "amap request non-success | infocode=%s | info=%s | url=%s",
-                    str(payload.get("infocode", "")),
-                    str(payload.get("info", "")),
-                    re.sub(r"key=[^&]+", "key=***", url),
-                )
-            return payload
-    except Exception:
-        logger.warning(
-            "amap request failed | url=%s",
-            re.sub(r"key=[^&]+", "key=***", url),
-        )
-        return None
+    global _LAST_AMAP_REQUEST_TS
+    max_attempts = AMAP_RETRY_ON_QPS_LIMIT + 1
+    masked_url = re.sub(r"key=[^&]+", "key=***", url)
+
+    for attempt in range(1, max_attempts + 1):
+        interval_seconds = AMAP_REQUEST_MIN_INTERVAL_MS / 1000
+        if interval_seconds > 0:
+            now = time.monotonic()
+            wait_seconds = interval_seconds - (now - _LAST_AMAP_REQUEST_TS)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+            _LAST_AMAP_REQUEST_TS = time.monotonic()
+
+        try:
+            with urlopen(url, timeout=6) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                status = str(payload.get("status", ""))
+                infocode = str(payload.get("infocode", ""))
+                info = str(payload.get("info", ""))
+                if status not in {"1", "true", "True"}:
+                    is_qps_limit = infocode == "10021"
+                    should_retry = is_qps_limit and attempt < max_attempts
+                    logger.warning(
+                        "amap request non-success | infocode=%s | info=%s | attempt=%s/%s | retry=%s | url=%s",
+                        infocode,
+                        info,
+                        attempt,
+                        max_attempts,
+                        "yes" if should_retry else "no",
+                        masked_url,
+                    )
+                    if should_retry:
+                        time.sleep(AMAP_RETRY_DELAY_SECONDS)
+                        continue
+                return payload
+        except Exception:
+            logger.warning(
+                "amap request failed | attempt=%s/%s | url=%s",
+                attempt,
+                max_attempts,
+                masked_url,
+            )
+            return None
     return None
 
 
@@ -1081,36 +1147,21 @@ def search_amap_poi_coordinates(
     if not amap_key or not keyword:
         return None
 
-    best_choice: dict[str, Any] | None = None
-    best_score = -10**9
+    destination_query, region_guard_terms = normalize_amap_destination(destination)
+    destination_for_score = destination_query or destination
     sampled_context = context_keywords or []
     specific_tokens = [
         token
         for token in tokenize_search_text(f"{keyword} {' '.join(sampled_context)}")
-        if token not in destination and token not in GENERIC_ACTIVITY_TOKENS
+        if token not in destination_for_score and token not in GENERIC_ACTIVITY_TOKENS
     ]
     min_score = 8 if specific_tokens else 16
-
-    strict_text = collect_amap_text_pois(
-        amap_key=amap_key,
-        destination=destination,
-        keyword=keyword,
-        city_limit=True,
-    )
-    relaxed_text = collect_amap_text_pois(
-        amap_key=amap_key,
-        destination=destination,
-        keyword=keyword,
-        city_limit=False,
-    )
-    text_collected: list[tuple[dict[str, Any], str]] = []
-    text_collected.extend((poi, "text_strict") for poi in strict_text if isinstance(poi, dict))
-    text_collected.extend((poi, "text_relaxed") for poi in relaxed_text if isinstance(poi, dict))
 
     def select_best_from_candidates(
         collected: list[tuple[dict[str, Any], str]],
         *,
         allow_around_bonus: bool,
+        enforce_region_guard: bool,
     ) -> tuple[dict[str, Any] | None, int, list[dict[str, Any]]]:
         selected: dict[str, Any] | None = None
         selected_score = -10**9
@@ -1118,6 +1169,8 @@ def search_amap_poi_coordinates(
         scored: list[dict[str, Any]] = []
 
         for poi, source in collected:
+            if enforce_region_guard and region_guard_terms and not poi_matches_region_terms(poi, region_guard_terms):
+                continue
             parsed_location = parse_amap_location(poi.get("location"))
             if not parsed_location:
                 continue
@@ -1130,7 +1183,7 @@ def search_amap_poi_coordinates(
 
             score = score_amap_poi(
                 poi=poi,
-                destination=destination,
+                destination=destination_for_score,
                 keyword=keyword,
                 context_keywords=sampled_context,
             )
@@ -1161,23 +1214,61 @@ def search_amap_poi_coordinates(
             }
         return selected, selected_score, scored
 
-    best_choice, best_score, scored_candidates = select_best_from_candidates(
-        text_collected,
+    strict_text = collect_amap_text_pois(
+        amap_key=amap_key,
+        destination=destination_query or destination,
+        keyword=keyword,
+        city_limit=True,
+    )
+    strict_collected: list[tuple[dict[str, Any], str]] = [
+        (poi, "text_strict") for poi in strict_text if isinstance(poi, dict)
+    ]
+    strict_best, strict_best_score, strict_scored = select_best_from_candidates(
+        strict_collected,
         allow_around_bonus=False,
+        enforce_region_guard=True,
     )
 
-    if best_choice and best_score >= min_score:
+    if strict_best and strict_best_score >= min_score:
         if LOG_AMAP_MATCH_DEBUG:
-            top = sorted(scored_candidates, key=lambda item: int(item.get("score", -10**9)), reverse=True)[:8]
+            top = sorted(strict_scored, key=lambda item: int(item.get("score", -10**9)), reverse=True)[:8]
             logger.info(
-                "amap match selected (text-first) | destination=%s | keyword=%s | min_score=%s | selected=%s | top_candidates=%s",
+                "amap match selected (text-strict) | destination=%s | keyword=%s | min_score=%s | selected=%s | top_candidates=%s",
                 destination,
                 keyword,
                 min_score,
-                json.dumps(best_choice, ensure_ascii=False),
+                json.dumps(strict_best, ensure_ascii=False),
                 json.dumps(top, ensure_ascii=False),
             )
-        return best_choice
+        return strict_best
+
+    relaxed_text = collect_amap_text_pois(
+        amap_key=amap_key,
+        destination=destination_query or destination,
+        keyword=keyword,
+        city_limit=False,
+    )
+    relaxed_collected: list[tuple[dict[str, Any], str]] = [
+        (poi, "text_relaxed") for poi in relaxed_text if isinstance(poi, dict)
+    ]
+    relaxed_best, relaxed_best_score, relaxed_scored = select_best_from_candidates(
+        relaxed_collected,
+        allow_around_bonus=False,
+        enforce_region_guard=True,
+    )
+
+    if relaxed_best and relaxed_best_score >= min_score:
+        if LOG_AMAP_MATCH_DEBUG:
+            top = sorted(relaxed_scored, key=lambda item: int(item.get("score", -10**9)), reverse=True)[:8]
+            logger.info(
+                "amap match selected (text-relaxed) | destination=%s | keyword=%s | min_score=%s | selected=%s | top_candidates=%s",
+                destination,
+                keyword,
+                min_score,
+                json.dumps(relaxed_best, ensure_ascii=False),
+                json.dumps(top, ensure_ascii=False),
+            )
+        return relaxed_best
 
     around_scored: list[dict[str, Any]] = []
     if seed_location:
@@ -1190,6 +1281,7 @@ def search_amap_poi_coordinates(
         around_best, around_best_score, around_scored = select_best_from_candidates(
             around_collected,
             allow_around_bonus=True,
+            enforce_region_guard=False,
         )
         if around_best and around_best_score >= min_score:
             if LOG_AMAP_MATCH_DEBUG:
@@ -1205,7 +1297,11 @@ def search_amap_poi_coordinates(
             return around_best
 
     if LOG_AMAP_MATCH_DEBUG:
-        text_top = sorted(scored_candidates, key=lambda item: int(item.get("score", -10**9)), reverse=True)[:8]
+        text_top = sorted(
+            strict_scored + relaxed_scored,
+            key=lambda item: int(item.get("score", -10**9)),
+            reverse=True,
+        )[:8]
         around_top = sorted(around_scored, key=lambda item: int(item.get("score", -10**9)), reverse=True)[:8]
         logger.info(
             "amap match rejected | destination=%s | keyword=%s | min_score=%s | text_top=%s | around_top=%s",
