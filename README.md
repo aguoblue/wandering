@@ -25,12 +25,14 @@ npm run dev
 cd figma
 npm install --legacy-peer-deps
 npm run dev
+npm run ai:server
 ```
 
 说明：
 
 - `figma/` 是独立项目，不依赖主应用目录结构
 - 首次安装建议使用 `--legacy-peer-deps`，因为导出依赖中存在 peer dependency 冲突
+- `npm run ai:server` 会启动本地 AI 后端（`python3 server/ai_server.py`）
 
 ## 构建
 

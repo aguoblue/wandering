@@ -1,3 +1,10 @@
+# 20260424 figma 对话框新增语音输入按钮（话筒）
+
+1. **改动位置修正到 figma 项目**：在 `figma/src/app/components/TravelChatPanel.tsx` 的输入区，将话筒按钮加入到“发送”按钮旁边，匹配对话框交互预期。
+2. **语音转文字回填**：接入浏览器 `SpeechRecognition/webkitSpeechRecognition`，点击话筒开始识别，再次点击停止；识别文本实时回填到聊天输入框。
+3. **交互与异常处理**：新增录音中状态（按钮切换为停止图标）、权限拒绝/无语音/识别失败提示；发送消息时自动停止录音，避免状态冲突。
+4. **构建验证**：`cd figma && npm run build` 通过。
+
 # 20260420 主应用提升到仓库根目录并移除 my-app
 
 1. **主应用目录扁平化**：将原 `my-app/` 下的 Vite + React + 高德地图主应用迁移到仓库根目录，主入口改为根目录 `index.html`、`src/`、`public/`、`package.json` 等文件。

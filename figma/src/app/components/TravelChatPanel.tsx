@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, LoaderCircle, MessageSquarePlus, SendHorizonal, Trash2, User } from 'lucide-react';
+import { Bot, LoaderCircle, MessageSquarePlus, Mic, MicOff, SendHorizonal, Trash2, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
@@ -98,6 +98,20 @@ interface TravelChatPanelProps {
   relatedPlan?: TravelPlan;
 }
 
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onstart: (() => void) | null;
+  onresult: ((event: any) => void) | null;
+  onerror: ((event: any) => void) | null;
+  onend: (() => void) | null;
+}
+
+type SpeechRecognitionCtorLike = new () => SpeechRecognitionLike;
+
 export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPanelProps) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [relatedConversationIds, setRelatedConversationIds] = useState<string[]>([]);
@@ -107,11 +121,25 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
   const [isSending, setIsSending] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState('');
+  const [speechError, setSpeechError] = useState('');
+  const [isListening, setIsListening] = useState(false);
   const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const sendLockRef = useRef(false);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBaseDraftRef = useRef('');
+  const draftRef = useRef('');
   const isPlanScoped = Boolean(relatedPlan);
+  const speechRecognitionCtor = useMemo<SpeechRecognitionCtorLike | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const speechWindow = window as Window & {
+      SpeechRecognition?: SpeechRecognitionCtorLike;
+      webkitSpeechRecognition?: SpeechRecognitionCtorLike;
+    };
+    return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+  }, []);
+  const speechSupported = Boolean(speechRecognitionCtor);
 
   const focusInput = () => {
     window.requestAnimationFrame(() => {
@@ -198,6 +226,61 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
     container.scrollTop = container.scrollHeight;
   }, [messages, isSending]);
 
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!speechRecognitionCtor) return;
+
+    const recognition = new speechRecognitionCtor();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+      setSpeechError('');
+      setIsListening(true);
+      speechBaseDraftRef.current = draftRef.current.trim();
+    };
+
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        transcript += event.results[i][0].transcript;
+      }
+      const normalizedTranscript = transcript.trim();
+      if (!normalizedTranscript) return;
+      const baseDraft = speechBaseDraftRef.current;
+      setDraft(baseDraft ? `${baseDraft} ${normalizedTranscript}` : normalizedTranscript);
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        setSpeechError('麦克风权限被拒绝，请开启后重试');
+      } else if (event.error === 'no-speech') {
+        setSpeechError('未识别到语音，请再试一次');
+      } else {
+        setSpeechError('语音识别失败，请稍后重试');
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    speechRecognitionRef.current = recognition;
+
+    return () => {
+      recognition.onstart = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+      speechRecognitionRef.current = null;
+    };
+  }, [speechRecognitionCtor]);
+
   const visibleMessages = messages.length > 0 ? messages : [WELCOME_MESSAGE];
 
   const handleCreateConversation = async () => {
@@ -240,6 +323,7 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
   const handleSendMessage = async () => {
     const content = draft.trim();
     if (!content || isSending || sendLockRef.current) return;
+    speechRecognitionRef.current?.stop();
     sendLockRef.current = true;
     setIsSending(true);
     setError('');
@@ -373,6 +457,28 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
       setIsSending(false);
       setStreamingAssistantId(null);
       sendLockRef.current = false;
+    }
+  };
+
+  const handleVoiceInput = () => {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) {
+      setSpeechError('当前浏览器不支持语音输入');
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+      return;
+    }
+
+    setSpeechError('');
+    try {
+      recognition.start();
+    } catch (nextError) {
+      setSpeechError('语音识别启动失败，请重试');
+      setIsListening(false);
+      console.error('语音识别启动失败', nextError);
     }
   };
 
@@ -537,14 +643,28 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
           />
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">支持 `Cmd/Ctrl + Enter` 快速发送</p>
-            <Button
-              onClick={() => void handleSendMessage()}
-              disabled={isSending || !draft.trim()}
-            >
-              <SendHorizonal className="size-4" />
-              发送
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="icon"
+                variant={isListening ? 'destructive' : 'outline'}
+                onClick={handleVoiceInput}
+                disabled={isSending || !speechSupported}
+                title={isListening ? '停止语音输入' : '开始语音输入'}
+                aria-label={isListening ? '停止语音输入' : '开始语音输入'}
+              >
+                {isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+              </Button>
+              <Button
+                onClick={() => void handleSendMessage()}
+                disabled={isSending || !draft.trim()}
+              >
+                <SendHorizonal className="size-4" />
+                发送
+              </Button>
+            </div>
           </div>
+          {speechError && <p className="mt-3 text-sm text-red-500">{speechError}</p>}
           {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
         </div>
       </div>
