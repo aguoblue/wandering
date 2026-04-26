@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "ai:server": "python3 server/ai_server.py",
+    "ai:server:tools": "python3 server/ai_server_tools.py",
     "build": "vite build",
     "preview": "vite preview"
   },

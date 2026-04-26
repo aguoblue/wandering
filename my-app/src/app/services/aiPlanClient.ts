@@ -5,7 +5,6 @@ export interface GeneratePlanInput {
   days?: number;
   activitiesPerDay?: number;
   startDate?: string;
-  budgetRange?: string;
   style?: string;
 }
 

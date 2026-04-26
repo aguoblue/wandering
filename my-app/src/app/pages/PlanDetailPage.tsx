@@ -4,20 +4,29 @@ import { MapView } from '../components/MapView';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
-import { ArrowLeft, Calendar, TrendingUp, Wallet, MapIcon, List } from 'lucide-react';
+import { ArrowLeft, Calendar, TrendingUp, MapIcon, List } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getAllPlans } from '../data/plansStore';
 import { TravelChatPanel } from '../components/TravelChatPanel';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
+import type { TravelPlan } from '../data/mockPlans';
 
 export function PlanDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeDay, setActiveDay] = useState(0);
-  const [, setPlansVersion] = useState(0);
+  const [plan, setPlan] = useState<TravelPlan | null>(() => getAllPlans().find(p => p.id === id) ?? null);
   
-  const plan = getAllPlans().find(p => p.id === id);
+  useEffect(() => {
+    setPlan(getAllPlans().find(p => p.id === id) ?? null);
+    setActiveDay(0);
+  }, [id]);
+
+  useEffect(() => {
+    if (!plan || activeDay < plan.days.length) return;
+    setActiveDay(plan.days.length > 0 ? plan.days.length - 1 : 0);
+  }, [activeDay, plan]);
   
   if (!plan) {
     return (
@@ -84,11 +93,6 @@ export function PlanDetailPage() {
               <Calendar className="size-4 text-blue-600" />
               <span className="font-medium">时长：</span>
               <span>{plan.duration}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Wallet className="size-4 text-green-600" />
-              <span className="font-medium">预算：</span>
-              <span>{plan.budget}</span>
             </div>
             <div className="flex items-center gap-2">
               <TrendingUp className="size-4 text-orange-600" />
@@ -245,8 +249,10 @@ export function PlanDetailPage() {
 
           <TravelChatPanel
             relatedPlan={plan}
-            onPlanGenerated={() => {
-              setPlansVersion((current) => current + 1);
+            onPlanGenerated={(nextPlan) => {
+              if (nextPlan.id === plan.id) {
+                setPlan(nextPlan);
+              }
             }}
           />
         </div>

@@ -24,7 +24,6 @@ export interface TravelPlan {
   duration: string;
   highlight: string;
   walkingIntensity: string;
-  budget: string;
   image: string;
   days: Day[];
   destination: string;
@@ -38,7 +37,6 @@ export const mockPlans: TravelPlan[] = [
     duration: '2天1晚',
     highlight: '漫步苏堤、品龙井茶、赏西湖夜景，感受江南诗意',
     walkingIntensity: '低 (5-8km/天)',
-    budget: '¥800-1200',
     image: 'https://images.unsplash.com/photo-1586862118451-efc84a66e704?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx3ZXN0JTIwbGFrZSUyMGhhbmd6aG91JTIwY2hpbmElMjBzY2VuaWN8ZW58MXx8fHwxNzc1NTQ3MjgwfDA&ixlib=rb-4.1.0&q=80&w=1080',
     destination: '杭州',
     days: [
@@ -159,7 +157,6 @@ export const mockPlans: TravelPlan[] = [
     duration: '3天2晚',
     highlight: '故宫深度游、长城日出、胡同文化体验',
     walkingIntensity: '中高 (10-15km/天)',
-    budget: '¥1500-2500',
     image: 'https://images.unsplash.com/photo-1551101571-64d951840a86?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmb3JiaWRkZW4lMjBjaXR5JTIwYmVpamluZyUyMHRlbXBsZXxlbnwxfHx8fDE3NzU1NDcyODF8MA&ixlib=rb-4.1.0&q=80&w=1080',
     destination: '北京',
     days: [
@@ -286,7 +283,6 @@ export const mockPlans: TravelPlan[] = [
     duration: '2天1晚',
     highlight: '外滩夜景、田子坊文艺、陆家嘴CBD体验',
     walkingIntensity: '中 (8-12km/天)',
-    budget: '¥1200-2000',
     image: 'https://images.unsplash.com/photo-1647067151201-0b37c7555870?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzaGFuZ2hhaSUyMGJ1bmQlMjBuaWdodCUyMHNreWxpbmV8ZW58MXx8fHwxNzc1NTQ3MjgxfDA&ixlib=rb-4.1.0&q=80&w=1080',
     destination: '上海',
     days: [
@@ -383,7 +379,6 @@ export const mockPlans: TravelPlan[] = [
     duration: '3天2晚',
     highlight: '漓江竹筏漂流、遇龙河骑行、银子岩溶洞',
     walkingIntensity: '低 (3-6km/天)',
-    budget: '¥1000-1800',
     image: 'https://images.unsplash.com/photo-1773318901379-aac92fdf5611?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxndWlsaW4lMjBrYXJzdCUyMG1vdW50YWlucyUyMHJpdmVyfGVufDF8fHx8MTc3NTU0NzI4MXww&ixlib=rb-4.1.0&q=80&w=1080',
     destination: '桂林',
     days: [
@@ -534,7 +529,6 @@ export const mockPlans: TravelPlan[] = [
     duration: '1天',
     highlight: '沿海岸线漫步，品尝特色粤菜，捕捉黄昏海景',
     walkingIntensity: '低 (5-8km/天)',
-    budget: '¥700-1200',
     image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800',
     destination: '深圳',
     days: [

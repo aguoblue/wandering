@@ -4,7 +4,8 @@ import { Search, Filter, MapPin, LoaderCircle, Check } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { motion } from 'motion/react';
-import { getAllPlans } from '../data/plansStore';
+import { deleteGeneratedPlan, getAllPlans } from '../data/plansStore';
+import type { TravelPlan } from '../data/mockPlans';
 import {
   locateCenterByKeyword,
   locateCenterByLocation,
@@ -76,6 +77,12 @@ export function PlansListPage() {
 
   const handlePlanGeneratedFromChat = () => {
     setPlans(getAllPlans());
+  };
+
+  const handleDeletePlan = (plan: TravelPlan) => {
+    if (!window.confirm(`确定要删除「${plan.name}」吗？删除后无法恢复。`)) return;
+    const nextPlans = deleteGeneratedPlan(plan.id);
+    setPlans(nextPlans);
   };
 
   const handleSearchLocation = async () => {
@@ -190,7 +197,7 @@ export function PlansListPage() {
       <div className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            AI 旅行计划精选
+            懒人出行规划工具
           </h1>
           <p className="text-muted-foreground mt-2">搜索地点定位地图，也可直接使用右下角高德定位按钮</p>
         </div>
@@ -409,7 +416,7 @@ export function PlansListPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
             >
-              <TravelPlanCard plan={plan} />
+              <TravelPlanCard plan={plan} onDelete={handleDeletePlan} />
             </motion.div>
           ))}
         </motion.div>

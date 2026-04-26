@@ -10,6 +10,7 @@ interface ActivityItemProps {
 
 export function ActivityItem({ activity }: ActivityItemProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const alternatives = Array.isArray(activity.alternatives) ? activity.alternatives : [];
   
   const periodColors = {
     '上午': 'bg-amber-100 text-amber-800 border-amber-300',
@@ -77,13 +78,13 @@ export function ActivityItem({ activity }: ActivityItemProps) {
               </div>
             </div>
             
-            {activity.alternatives.length > 0 && (
+            {alternatives.length > 0 && (
               <div className="flex items-start gap-2">
                 <Repeat className="size-4 text-purple-600 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium">替代选项</p>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {activity.alternatives.map((alt, index) => (
+                    {alternatives.map((alt, index) => (
                       <span 
                         key={index}
                         className="text-xs px-2 py-1 rounded-full bg-background border"

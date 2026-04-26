@@ -1,4 +1,4 @@
-import { TravelPlan } from './mockPlans';
+import type { TravelPlan } from './mockPlans';
 
 const GENERATED_PLANS_KEY = 'figma_generated_travel_plans_v1';
 const PLAN_CONVERSATION_LINKS_KEY = 'figma_plan_conversation_links_v2';
@@ -93,5 +93,21 @@ export function upsertGeneratedPlan(plan: TravelPlan): TravelPlan[] {
   const current = loadGeneratedPlans();
   const next = [plan, ...current.filter((item) => item.id !== plan.id)];
   saveGeneratedPlans(next);
+  return next;
+}
+
+export function deleteGeneratedPlan(planId: string): TravelPlan[] {
+  if (!planId) return loadGeneratedPlans();
+
+  const current = loadGeneratedPlans();
+  const next = current.filter((item) => item.id !== planId);
+  saveGeneratedPlans(next);
+
+  const currentMap = loadPlanConversationLinksMap();
+  if (currentMap[planId]) {
+    delete currentMap[planId];
+    savePlanConversationLinksMap(currentMap);
+  }
+
   return next;
 }

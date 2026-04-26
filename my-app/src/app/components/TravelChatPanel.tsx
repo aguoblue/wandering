@@ -70,7 +70,6 @@ function summarizePlanForPrompt(plan: TravelPlan) {
     `计划名称：${plan.name}`,
     `目的地：${plan.destination}`,
     `时长：${plan.duration}`,
-    `预算：${plan.budget}`,
     `亮点：${plan.highlight}`,
     `日程概览：\n${daySummaries}`
   ].join('\n');
@@ -94,7 +93,7 @@ function normalizeMessagesForDisplay(messages: ChatMessage[], isPlanScoped: bool
 }
 
 interface TravelChatPanelProps {
-  onPlanGenerated?: () => void;
+  onPlanGenerated?: (plan: TravelPlan) => void;
   relatedPlan?: TravelPlan;
 }
 
@@ -402,7 +401,7 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
             setRelatedConversationIds((current) => Array.from(new Set([...current, conversationId])));
             linkConversationToPlan(plan.id, conversationId);
           }
-          onPlanGenerated?.();
+          onPlanGenerated?.(plan);
           if (!nextAssistantMessage) return;
           setMessages((current) =>
             current.map((item) =>
@@ -424,7 +423,7 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
           if (targetPlanId && relatedPlan?.id && targetPlanId !== relatedPlan.id) {
             linkConversationToPlan(targetPlanId, conversationId);
           }
-          onPlanGenerated?.();
+          onPlanGenerated?.(plan);
           if (!nextAssistantMessage) return;
           setMessages((current) =>
             current.map((item) =>

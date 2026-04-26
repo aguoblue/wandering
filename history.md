@@ -1,3 +1,77 @@
+# 20260426 my-app 首页标题改为懒人出行规划工具
+
+1. **首页定位文案调整**：`PlansListPage` 顶部主标题从“AI 旅行计划精选”改为“懒人出行规划工具”，更贴近轻量出行规划场景。
+
+# 20260426 my-app 修复活动备选项缺失导致详情崩溃
+
+1. **前端容错**：`ActivityItem` 和 `MapView` 读取 `alternatives` 前先确认是数组，避免 AI 计划缺字段时报 `Cannot read properties of undefined`。
+2. **后端补齐**：`validate_generated_plan` 会为缺少 `alternatives` 的活动补空数组，降低新计划落库后的渲染风险。
+
+# 20260426 my-app 活动标题前缀改用高德区名
+
+1. **标题前缀来源调整**：tool-first 工具不再用计划 `destination` 统一拼活动标题前缀，避免“深圳光明区·坪洲站”这类误导展示。
+2. **高德区名落标题**：活动坐标匹配成功后，使用高德 POI 返回的 `adname` 拼接展示标题，例如“宝安区·坪洲站”“光明区·光明农场”。
+3. **保留搜索纠偏**：出发点搜索仍使用城市名作为上下文，活动搜索继续使用计划目的地作为上下文。
+
+# 20260426 my-app 修复出发点被目的地前缀污染
+
+1. **根因定位**：tool-first 路线优化中 `normalize_activity_titles_with_destination` 会给所有活动加 `destination` 前缀，导致“坪洲站”被展示成“深圳光明区·坪洲站”。
+2. **出发点跳过前缀**：新增工具侧标题归一化逻辑，识别当天第一个出发/集合/站点类活动时保留原标题。
+3. **出发点搜索纠偏**：出发点 POI 搜索改用城市名作为上下文，避免把“深圳光明区”拼进“坪洲站”的搜索关键词。
+
+# 20260426 my-app tool-first 新增直线距离路线优化工具
+
+1. **新增工具**：`ai_server_tools.py` 增加 `optimize_travel_plan_route`，输入与 `create_travel_plan` 对齐为 `cityname + plan + targetPlanId?`。
+2. **首活动作为出发点**：工具会按天处理活动列表，保留 `activities[0]` 作为当天出发点，只用直线距离贪心重排后续活动。
+3. **调用策略提示**：tool-first 系统提示新增路线优化规则：AI 自生成计划先优化再创建；外部链接默认保留顺序，除非用户明确要求优化路线。
+
+# 20260426 my-app 新增直线距离贪心路线测试脚本
+
+1. **新增测试脚本**：`my-app/server/scripts/test_greedy_direct_route.py` 支持用内置示例、命令行参数或 AI 输出 JSON 测试活动点排序。
+2. **高德 POI 坐标替换**：脚本会按 `cityname/start/activities` 调用高德 `place/text`，取第一条 POI 的真实坐标。
+3. **贪心排序**：从出发点开始，每轮选择直线距离最近的未访问活动点，并输出匹配结果、未解析地点、分段距离与总距离。
+
+# 20260426 my-app 主页面支持删除计划
+
+1. **新增删除入口**：`TravelPlanCard` 支持传入 `onDelete`，计划卡片左上角显示删除按钮，点击时不会跳转详情页。
+2. **本地数据清理**：`plansStore` 新增 `deleteGeneratedPlan`，删除计划时同步移除对应的计划-会话关联记录。
+3. **列表即时刷新**：`PlansListPage` 删除确认后刷新本地计划列表与统计数据。
+
+# 20260426 my-app 计划详情页更新复用原计划 ID
+
+1. **详情页更新不再新增计划**：当对话请求携带 `targetPlanId` 和当前计划时，`create_travel_plan` 允许携带目标计划 ID，并强制返回计划复用该 ID。
+2. **tool-first 更新走同一工具**：详情页上下文提示模型在增删改计划时调用 `create_travel_plan` 输出修改后的完整计划；后端将这类结果改发 `plan_update`，前端按同一 `plan.id` 覆盖原计划。
+3. **隐藏工具事件入库**：`messages` 表新增 `kind/visible`，tool-first 会按顺序保存隐藏的 `tool_use/tool_result` 事件；前端历史接口只返回可见聊天，模型上下文会读取完整事件流。
+
+# 20260426 my-app 高德请求默认间隔调整
+
+1. **限流参数调整**：`my-app/server/ai_server.py` 中 `AI_SERVER_AMAP_REQUEST_MIN_INTERVAL_MS` 的默认值从 `220ms` 调整为 `300ms`，降低连续 POI 搜索触发高德 QPS 限流的概率。
+2. **兼容覆盖**：仍保留环境变量 `AI_SERVER_AMAP_REQUEST_MIN_INTERVAL_MS`，需要时可按部署环境继续调整。
+
+# 20260426 my-app 计划时段归一化
+
+1. **新增归一化**：`my-app/server/ai_server.py` 增加 `normalize_plan_activity_periods`，将模型输出的非常规 `period` 统一映射到 `上午/中午/下午/晚上`。
+2. **夜晚兜底**：包含“傍晚/夜/晚”的时段统一归类为 `晚上`，修复模型输出 `傍晚/夜晚` 这类前端非枚举值的问题。
+3. **链路覆盖**：普通计划生成、计划更新、tool-first `create_travel_plan` 都会在落地前执行时段归一化。
+
+# 20260426 my-app tool-first 输出 token 上限可配置
+
+1. **调大默认输出**：`my-app/server/ai_server_tools.py` 的 tool-first Anthropic 请求 `max_tokens` 从 `1800` 提升到默认 `4096`，降低生成完整 `create_travel_plan` 工具参数时被截断的概率。
+2. **环境变量配置**：新增 `AI_SERVER_TOOL_MAX_TOKENS`，可按需要继续调大；最小值保护为 `1024`。
+
+# 20260426 my-app 暂时移除计划预算指标
+
+1. **前端展示移除**：`TravelPlanCard` 与 `PlanDetailPage` 不再展示预算，也移除对应钱包图标；计划页对话上下文摘要不再注入预算。
+2. **计划结构放宽**：`TravelPlan` 类型和后端 `validate_generated_plan` 不再要求 `budget` 字段，AI 生成提示词与 tool-first `create_travel_plan` 示例同步去掉预算。
+3. **对话收集降噪**：计划收集提示与草稿摘要不再询问/展示预算，旧模型若仍返回 `budgetRange` 会在进入草稿前被丢弃。
+
+# 20260426 my-app tool-first 新增生成计划工具
+
+1. **新增工具**：`my-app/server/ai_server_tools.py` 增加 `create_travel_plan` Anthropic tool，提示词要求模型在生成计划时提交完整 `TravelPlan` JSON，并额外提供中文城市级 `cityname`。
+2. **高德坐标落地**：工具会校验计划结构、重写唯一 `plan.id`、补封面，并按每个活动标题调用高德 `v5/place/text`，使用 `region=<cityname>`、`city_limit=true`、`page_size=1` 取第一条 POI 覆盖 `coordinates`。
+3. **调试日志**：新增工具输入、高德请求参数（脱敏 key）、高德返回结果、坐标替换结果日志，便于观察 POI 匹配链路。
+4. **SSE 协议打通**：tool-first 流程捕获 `create_travel_plan` 成功结果后，继续让模型生成自然语言回复，并通过 `type=plan` SSE 事件把正式 `TravelPlan` 推给前端。
+
 # 20260424 my-app 计划生成后自动调用 Pexels 获取封面图
 
 1. **后端封面图来源升级**：`my-app/server/ai_server.py` 在计划生成/更新后设置 `plan.image` 时，改为优先调用 `Pexels Search API` 获取横图链接（`large2x/large/landscape/original`）。
@@ -562,3 +636,10 @@
 1. **目的地归一化**：`figma/server/ai_server.py` 新增 `normalize_amap_destination`，当目的地包含“八卦城/特克斯”时，统一使用 `新疆` 作为高德 `region` 查询值。
 2. **区域词过滤**：新增 `poi_matches_region_terms`，对文本检索候选强制校验 `新疆/伊犁/特克斯` 区域词，避免命中北京/香港等跨区域 POI。
 3. **匹配策略联动**：`search_amap_poi_coordinates` 的 `text_strict/text_relaxed` 均启用区域词过滤，且评分环节使用归一化后的目的地文本，提升本地相关性。
+
+# 20260426 my-app 新增工具优先后端实验入口
+
+1. **并行入口**：新增 `my-app/server/ai_server_tools.py`，保留原 `ai_server.py` 不变，用于试验 Anthropic 原生 tool use 驱动的对话流程。
+2. **工具化动作**：当前仅通过 Anthropic `tools` 参数暴露 `fetch_xhs_note`，先聚焦链接抓取与工具调用闭环，暂不接入计划生成/更新工具。
+3. **启动脚本**：`my-app/package.json` 新增 `npm run ai:server:tools`，可单独启动新版工具优先服务并保持现有前端 SSE 事件格式兼容。
+4. **调试日志**：工具优先服务新增用户输入、发给模型的 messages、模型响应、工具调用参数、工具结果与最终助手消息日志，便于观察 tool use 是否按预期触发。

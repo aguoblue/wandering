@@ -9,7 +9,6 @@ export const AI_PLAN_SYSTEM_PROMPT = `你是一个“旅行数据生成器”，
   duration: string
   highlight: string
   walkingIntensity: string
-  budget: string
   image: string
   days: Day[]
   destination: string
@@ -41,11 +40,10 @@ export const AI_PLAN_SYSTEM_PROMPT = `你是一个“旅行数据生成器”，
 7. day 必须从 1 连续递增；date 也按天连续递增。
 8. activity.id 在同一个 plan 内唯一，格式建议 "{day}-{index}"。
 9. tags 建议 3 个，简短中文词。
-10. budget 格式：¥数字-数字，例如 ¥800-1200。
-11. walkingIntensity 使用以下之一：低 (5-8km/天) / 中 (8-12km/天) / 中高 (10-15km/天)。
-12. image 使用可访问图片 URL（可用 unsplash）。
-13. alternatives 至少 2 个备选项。
-14. 文案必须是中文。
+10. walkingIntensity 使用以下之一：低 (5-8km/天) / 中 (8-12km/天) / 中高 (10-15km/天)。
+11. image 使用可访问图片 URL（可用 unsplash）。
+12. alternatives 至少 2 个备选项。
+13. 文案必须是中文。
 
 质量要求：
 - 路线尽量地理连贯，同一天不要跨城跳跃。
@@ -57,12 +55,11 @@ export interface BuildAiPromptInput {
   days: number;
   activitiesPerDay: number;
   startDate: string;
-  budgetRange: string;
   style: string;
 }
 
 export function buildAiPlanUserPrompt(input: BuildAiPromptInput) {
-  const { city, days, activitiesPerDay, startDate, budgetRange, style } = input;
+  const { city, days, activitiesPerDay, startDate, style } = input;
 
   return `请按既定 schema 生成 1 条 TravelPlan 数据。
 
@@ -71,7 +68,6 @@ export function buildAiPlanUserPrompt(input: BuildAiPromptInput) {
 - 每条 plan 天数：${days}天
 - 每天活动数：${activitiesPerDay}个
 - 风格偏好：${style}
-- 预算区间：${budgetRange}
 - 出行节奏：低 或 中（不要中高）
 - 开始日期：${startDate}
 - 语言：中文简体

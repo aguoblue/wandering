@@ -284,6 +284,9 @@ export function MapView({ activities, planName }: MapViewProps) {
       toIndex: selectedSegmentStart + 1
     };
   }, [activities, selectedSegmentStart]);
+  const selectedSegmentAlternatives = Array.isArray(selectedSegmentDetails?.to.alternatives)
+    ? selectedSegmentDetails.to.alternatives
+    : [];
 
   const openActivityInfo = (index: number) => {
     const activity = activities[index];
@@ -603,11 +606,11 @@ export function MapView({ activities, planName }: MapViewProps) {
                     <p className="text-slate-500 mb-0.5">为什么这样安排</p>
                     <p className="leading-5">{selectedSegmentDetails.to.reason}</p>
                   </div>
-                  {selectedSegmentDetails.to.alternatives.length > 0 && (
+                  {selectedSegmentAlternatives.length > 0 && (
                     <div>
                       <p className="text-slate-500 mb-1">可替代路线</p>
                       <div className="flex flex-wrap gap-1">
-                        {selectedSegmentDetails.to.alternatives.slice(0, 3).map((item) => (
+                        {selectedSegmentAlternatives.slice(0, 3).map((item) => (
                           <span
                             key={item}
                             className="text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-700"

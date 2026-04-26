@@ -59,7 +59,7 @@ def request_place_text(
         "keywords": keyword,
         "region": region or "全国",
         "city_limit": "true" if city_limit else "false",
-        "show_fields": "business",
+        "show_fields": "business,photos",
         "page_size": page_size,
     }
     url = f"https://restapi.amap.com/v5/place/text?{urlencode(query)}"
