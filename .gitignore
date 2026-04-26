@@ -35,3 +35,5 @@ my-app/server/**/*.db
 my-app/.env
 my-app/.env.local
 my-app/.env.*.local
+
+temp/
