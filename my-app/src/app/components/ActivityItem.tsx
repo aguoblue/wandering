@@ -1,14 +1,17 @@
 import { Activity } from '../data/mockPlans';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { ChevronDown, Clock, MapPin, Repeat, Lightbulb } from 'lucide-react';
+import { ChevronDown, Clock, MapPin, Repeat, Lightbulb, NotebookPen } from 'lucide-react';
 import { useState } from 'react';
 import { motion } from 'motion/react';
+import { Textarea } from './ui/textarea';
 
 interface ActivityItemProps {
   activity: Activity;
+  note?: string;
+  onNoteChange?: (note: string) => void;
 }
 
-export function ActivityItem({ activity }: ActivityItemProps) {
+export function ActivityItem({ activity, note = '', onNoteChange }: ActivityItemProps) {
   const [isOpen, setIsOpen] = useState(false);
   const alternatives = Array.isArray(activity.alternatives) ? activity.alternatives : [];
   
@@ -96,6 +99,19 @@ export function ActivityItem({ activity }: ActivityItemProps) {
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="flex items-start gap-2 border-t pt-4">
+            <NotebookPen className="size-4 text-slate-600 mt-0.5 flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">我的感受</p>
+              <Textarea
+                value={note}
+                onChange={(event) => onNoteChange?.(event.target.value)}
+                className="mt-2 min-h-24 resize-y bg-background text-sm"
+                placeholder="写下这个活动的感受、踩坑、下次想怎么安排..."
+              />
+            </div>
           </div>
         </motion.div>
       </CollapsibleContent>

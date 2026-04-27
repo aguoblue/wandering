@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader } from './ui/card';
 import { Badge } from './ui/badge';
-import { Calendar, TrendingUp, MapPin, Trash2 } from 'lucide-react';
+import { Calendar, CheckCircle2, TrendingUp, MapPin, Trash2 } from 'lucide-react';
 import type { TravelPlan } from '../data/mockPlans';
 import { Link } from 'react-router';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -8,10 +8,11 @@ import { Button } from './ui/button';
 
 interface TravelPlanCardProps {
   plan: TravelPlan;
+  isCompleted?: boolean;
   onDelete?: (plan: TravelPlan) => void;
 }
 
-export function TravelPlanCard({ plan, onDelete }: TravelPlanCardProps) {
+export function TravelPlanCard({ plan, isCompleted = false, onDelete }: TravelPlanCardProps) {
   return (
     <div className="relative group">
       {onDelete && (
@@ -39,9 +40,21 @@ export function TravelPlanCard({ plan, onDelete }: TravelPlanCardProps) {
               alt={plan.name}
               className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
             />
-            <div className="absolute top-3 right-3 flex gap-2">
+            {isCompleted && (
+              <div className="absolute left-3 bottom-3">
+                <Badge className="gap-1 bg-amber-500 text-white shadow-sm">
+                  <CheckCircle2 className="size-3.5" />
+                  已完成
+                </Badge>
+              </div>
+            )}
+            <div className="absolute top-3 right-3 left-14 flex flex-wrap justify-end gap-1.5">
               {plan.tags.map((tag, index) => (
-                <Badge key={index} variant="secondary" className="bg-white/90 backdrop-blur-sm">
+                <Badge
+                  key={index}
+                  variant="secondary"
+                  className="max-w-full bg-white/90 backdrop-blur-sm whitespace-normal break-words text-right leading-4"
+                >
                   {tag}
                 </Badge>
               ))}

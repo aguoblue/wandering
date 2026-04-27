@@ -4,7 +4,7 @@ import { Search, Filter, MapPin, LoaderCircle, Check } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { motion } from 'motion/react';
-import { deleteGeneratedPlan, getAllPlans } from '../data/plansStore';
+import { deleteGeneratedPlan, getAllPlans, getPlanUserStates, type PlanUserState } from '../data/plansStore';
 import type { TravelPlan } from '../data/mockPlans';
 import {
   locateCenterByKeyword,
@@ -16,9 +16,12 @@ import {
 } from '../services/amapDiscoveryClient';
 import { DiscoveryMapView } from '../components/DiscoveryMapView';
 import { TravelChatPanel } from '../components/TravelChatPanel';
+import { UserProfileDialog } from '../components/UserProfileDialog';
+import { UserFootprintDialog } from '../components/UserFootprintDialog';
 
 export function PlansListPage() {
-  const [plans, setPlans] = useState(getAllPlans);
+  const [plans, setPlans] = useState<TravelPlan[]>([]);
+  const [planStates, setPlanStates] = useState<Record<string, PlanUserState>>({});
   const [keyword, setKeyword] = useState('');
 
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -75,14 +78,21 @@ export function PlansListPage() {
     setShowSuggestions(false);
   };
 
-  const handlePlanGeneratedFromChat = () => {
-    setPlans(getAllPlans());
+  const refreshPlans = async () => {
+    const nextPlans = await getAllPlans();
+    setPlans(nextPlans);
+    setPlanStates(await getPlanUserStates(nextPlans.map((plan) => plan.id)));
   };
 
-  const handleDeletePlan = (plan: TravelPlan) => {
+  const handlePlanGeneratedFromChat = () => {
+    void refreshPlans();
+  };
+
+  const handleDeletePlan = async (plan: TravelPlan) => {
     if (!window.confirm(`确定要删除「${plan.name}」吗？删除后无法恢复。`)) return;
-    const nextPlans = deleteGeneratedPlan(plan.id);
+    const nextPlans = await deleteGeneratedPlan(plan.id);
     setPlans(nextPlans);
+    setPlanStates(await getPlanUserStates(nextPlans.map((item) => item.id)));
   };
 
   const handleSearchLocation = async () => {
@@ -116,6 +126,10 @@ export function PlansListPage() {
       previous.includes(poi.id) ? previous.filter((id) => id !== poi.id) : [...previous, poi.id]
     );
   };
+
+  useEffect(() => {
+    void refreshPlans();
+  }, []);
 
   useEffect(() => {
     if (center || hasTriedAutoLocate || isLocating) return;
@@ -195,11 +209,19 @@ export function PlansListPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <div className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            懒人出行规划工具
-          </h1>
-          <p className="text-muted-foreground mt-2">搜索地点定位地图，也可直接使用右下角高德定位按钮</p>
+        <div className="max-w-7xl mx-auto px-4 py-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                懒人出行规划工具
+              </h1>
+              <p className="text-muted-foreground mt-2">搜索地点定位地图，也可直接使用右下角高德定位按钮</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <UserProfileDialog />
+              <UserFootprintDialog />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -416,7 +438,11 @@ export function PlansListPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
             >
-              <TravelPlanCard plan={plan} onDelete={handleDeletePlan} />
+              <TravelPlanCard
+                plan={plan}
+                isCompleted={planStates[plan.id]?.status === 'completed'}
+                onDelete={(nextPlan) => void handleDeletePlan(nextPlan)}
+              />
             </motion.div>
           ))}
         </motion.div>

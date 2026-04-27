@@ -395,13 +395,14 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
           );
         },
         (plan: StreamPlanPayload, nextAssistantMessage?: string) => {
-          upsertGeneratedPlan(plan);
+          void upsertGeneratedPlan(plan).then(() => {
+            onPlanGenerated?.(plan);
+          });
           if (relatedPlan) {
             linkConversationToPlan(relatedPlan.id, conversationId);
             setRelatedConversationIds((current) => Array.from(new Set([...current, conversationId])));
             linkConversationToPlan(plan.id, conversationId);
           }
-          onPlanGenerated?.(plan);
           if (!nextAssistantMessage) return;
           setMessages((current) =>
             current.map((item) =>
@@ -415,7 +416,9 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
           );
         },
         (plan: StreamPlanPayload, targetPlanId?: string, nextAssistantMessage?: string) => {
-          upsertGeneratedPlan(plan);
+          void upsertGeneratedPlan(plan).then(() => {
+            onPlanGenerated?.(plan);
+          });
           if (relatedPlan) {
             linkConversationToPlan(relatedPlan.id, conversationId);
             setRelatedConversationIds((current) => Array.from(new Set([...current, conversationId])));
@@ -423,7 +426,6 @@ export function TravelChatPanel({ onPlanGenerated, relatedPlan }: TravelChatPane
           if (targetPlanId && relatedPlan?.id && targetPlanId !== relatedPlan.id) {
             linkConversationToPlan(targetPlanId, conversationId);
           }
-          onPlanGenerated?.(plan);
           if (!nextAssistantMessage) return;
           setMessages((current) =>
             current.map((item) =>

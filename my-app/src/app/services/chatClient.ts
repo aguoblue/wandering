@@ -28,16 +28,38 @@ interface ChatStreamEvent {
   error?: string;
 }
 
+const API_UNAVAILABLE_MESSAGE = 'AI 后端服务未连接，请在 my-app 目录运行 npm run ai:server 后刷新页面';
+
 function normalizeError(payload: unknown, fallback: string) {
+  if (typeof payload === 'string') {
+    return payload.includes('Error occurred while trying to proxy')
+      ? API_UNAVAILABLE_MESSAGE
+      : payload || fallback;
+  }
   if (!payload || typeof payload !== 'object') return fallback;
   const record = payload as { error?: string; detail?: string };
   return record.error || record.detail || fallback;
 }
 
+async function readErrorPayload(response: Response) {
+  const text = await response.text().catch(() => '');
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 export async function listConversations() {
-  const response = await fetch('/api/conversations');
+  let response: Response;
+  try {
+    response = await fetch('/api/conversations');
+  } catch {
+    throw new Error(API_UNAVAILABLE_MESSAGE);
+  }
   if (!response.ok) {
-    const payload = await response.json().catch(() => null);
+    const payload = await readErrorPayload(response);
     throw new Error(normalizeError(payload, '加载会话列表失败'));
   }
   const data = (await response.json()) as { conversations?: ConversationMeta[] };

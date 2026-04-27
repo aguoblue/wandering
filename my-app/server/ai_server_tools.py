@@ -88,6 +88,9 @@ optimize_travel_plan_route arguments：
 - 如果调用了 optimize_travel_plan_route，后续 create_travel_plan 必须使用它返回的 plan，不要再使用优化前的 plan。
 - 生成计划时，plan 必须是完整 TravelPlan；cityname 必须填写中文城市名，仅支持城市级别。
 - 修改当前计划时，plan 必须是修改后的完整 TravelPlan，必须保留未要求修改的内容，plan.id 必须等于 targetPlanId。
+- 路线质量规则：同一天内尽量只安排在 1 个大区域，或安排在彼此相邻、交通顺路的区域；不要跨城市/跨城区大幅跳跃。
+- 路线质量规则：每天的路线应该单方向推进，避免上午去东边、下午回西边、晚上又回东边这类折返。
+- 路线质量规则：同类型体验不要连续出现太多次，除非用户明确要求；例如不要连续安排两次海边/看海，也不要连续堆叠多个相似打卡点。
 - create_travel_plan 成功后，你需要根据工具返回的 plan 用自然中文简短告知用户计划已生成，不要再输出 JSON。
 - 直接回复时使用自然中文，不要输出 JSON。
 """
@@ -240,13 +243,22 @@ def summarize_anthropic_response(response: Any) -> dict[str, Any]:
     }
 
 
-def request_anthropic_with_tools(messages: list[dict[str, Any]]) -> Any:
+def request_anthropic_with_tools(
+    messages: list[dict[str, Any]],
+    user_profile_markdown: str,
+    user_footprint_summary: str,
+) -> Any:
     client = legacy.Anthropic(api_key=legacy.API_KEY, base_url=legacy.BASE_URL)
+    system_prompt = legacy.build_user_memory_system_prompt(
+        TOOL_ROUTER_SYSTEM_PROMPT,
+        user_profile_markdown,
+        user_footprint_summary,
+    )
     return client.messages.create(
         model=legacy.MODEL_NAME,
         max_tokens=TOOL_ROUTER_MAX_TOKENS,
         temperature=0,
-        system=TOOL_ROUTER_SYSTEM_PROMPT,
+        system=system_prompt,
         messages=messages,
         tools=ANTHROPIC_TOOLS,
         tool_choice={"type": "auto"},
@@ -883,6 +895,173 @@ def get_health() -> dict[str, Any]:
     }
 
 
+@app.get("/api/user-profile")
+def get_user_profile() -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        profile = legacy.to_user_profile(legacy.get_user_profile_row(connection))
+        pending_row = connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM messages
+            WHERE visible = 1
+              AND profile_summary_version IS NULL
+              AND TRIM(content) <> ''
+            """
+        ).fetchone()
+    return {
+        "profile": profile,
+        "pendingMessageCount": int(pending_row["total"]) if pending_row else 0,
+    }
+
+
+@app.put("/api/user-profile")
+def put_user_profile(body: legacy.UserProfileInput) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        profile = legacy.save_user_profile_version(
+            connection,
+            user_id=legacy.DEFAULT_USER_ID,
+            profile_markdown=body.profileMarkdown,
+            update_type="user_manual",
+            source_message_ids=[],
+        )
+    return {"profile": profile}
+
+
+@app.post("/api/user-profile/auto-update")
+def post_user_profile_auto_update(body: legacy.UserProfileAutoUpdateInput) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        current_time = legacy.now_ms()
+        connection.execute(
+            """
+            UPDATE user_profiles
+            SET auto_update_enabled = ?, updated_at = ?
+            WHERE user_id = ?
+            """,
+            (1 if body.autoUpdateEnabled else 0, current_time, legacy.DEFAULT_USER_ID),
+        )
+        profile = legacy.to_user_profile(legacy.get_user_profile_row(connection))
+    return {"profile": profile}
+
+
+@app.post("/api/user-profile/summarize")
+def post_user_profile_summarize() -> dict[str, Any]:
+    if not legacy.API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY is missing")
+    with legacy.get_db_connection() as connection:
+        profile, summarized_count = legacy.summarize_user_profile_from_messages(
+            connection,
+            update_type="ai_manual",
+            min_messages=1,
+        )
+    return {
+        "profile": profile,
+        "summarizedMessageCount": summarized_count,
+    }
+
+
+@app.get("/api/plans")
+def get_plans() -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        plans = legacy.list_travel_plans(connection)
+    return {"plans": plans}
+
+
+@app.post("/api/plans")
+def post_plan(body: legacy.TravelPlanInput) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        plan = legacy.upsert_travel_plan(connection, body.plan)
+    return {"plan": plan}
+
+
+@app.post("/api/plans/import")
+def post_import_plans(body: list[legacy.TravelPlanInput]) -> dict[str, Any]:
+    imported_count = 0
+    with legacy.get_db_connection() as connection:
+        for item in body:
+            legacy.upsert_travel_plan(connection, item.plan)
+            imported_count += 1
+        plans = legacy.list_travel_plans(connection)
+    return {"plans": plans, "importedCount": imported_count}
+
+
+@app.get("/api/plans/{plan_id}")
+def get_plan(plan_id: str) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        row = legacy.ensure_travel_plan_exists(connection, plan_id)
+        plan = legacy.plan_to_response(row)
+    return {"plan": plan}
+
+
+@app.delete("/api/plans/{plan_id}")
+def delete_plan(plan_id: str) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        legacy.ensure_travel_plan_exists(connection, plan_id)
+        connection.execute(
+            "DELETE FROM travel_plans WHERE user_id = ? AND id = ?",
+            (legacy.DEFAULT_USER_ID, plan_id),
+        )
+    return {"ok": True}
+
+
+@app.get("/api/plans/{plan_id}/state")
+def get_plan_state(plan_id: str) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        legacy.ensure_travel_plan_exists(connection, plan_id)
+        state = legacy.get_plan_state_from_db(connection, plan_id)
+    return {"state": state}
+
+
+@app.post("/api/plans/{plan_id}/complete")
+def post_plan_complete(plan_id: str) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        state, visited_places = legacy.mark_travel_plan_completed(connection, plan_id)
+    return {"state": state, "visitedPlaces": visited_places}
+
+
+@app.get("/api/plans/{plan_id}/activity-notes")
+def get_activity_notes(plan_id: str) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        legacy.ensure_travel_plan_exists(connection, plan_id)
+        notes = legacy.get_activity_notes_from_db(connection, plan_id)
+    return {"notes": notes}
+
+
+@app.put("/api/plans/{plan_id}/activity-notes/{activity_id}")
+def put_activity_note(plan_id: str, activity_id: str, body: legacy.ActivityNoteInput) -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        legacy.ensure_travel_plan_exists(connection, plan_id)
+        note = body.note.strip()
+        current_time = legacy.now_ms()
+        if note:
+            connection.execute(
+                """
+                INSERT INTO activity_notes (user_id, plan_id, activity_id, note, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, plan_id, activity_id) DO UPDATE SET
+                  note = excluded.note,
+                  updated_at = excluded.updated_at
+                """,
+                (legacy.DEFAULT_USER_ID, plan_id, activity_id, note, current_time),
+            )
+        else:
+            connection.execute(
+                """
+                DELETE FROM activity_notes
+                WHERE user_id = ? AND plan_id = ? AND activity_id = ?
+                """,
+                (legacy.DEFAULT_USER_ID, plan_id, activity_id),
+            )
+        notes = legacy.get_activity_notes_from_db(connection, plan_id)
+    return {"notes": notes}
+
+
+@app.get("/api/visited-places")
+def get_visited_places() -> dict[str, Any]:
+    with legacy.get_db_connection() as connection:
+        visited_places = legacy.list_visited_places_from_db(connection)
+    return {"visitedPlaces": visited_places}
+
+
 @app.get("/api/conversations")
 def get_conversations() -> dict[str, Any]:
     with legacy.get_db_connection() as connection:
@@ -954,9 +1133,13 @@ def post_conversation_chat_stream(
     base_time = legacy.now_ms()
     user_message_id = f"msg_{uuid.uuid4().hex}"
     assistant_message_id = f"msg_{uuid.uuid4().hex}"
+    user_profile_markdown = legacy.DEFAULT_PROFILE_MARKDOWN
+    user_footprint_summary = "暂无用户足迹。"
 
     with legacy.get_db_connection() as connection:
         legacy.ensure_conversation_exists(connection, conversation_id)
+        user_profile_markdown = str(legacy.get_user_profile_row(connection)["profile_markdown"])
+        user_footprint_summary = legacy.build_user_footprint_summary(connection)
         connection.execute(
             """
             INSERT INTO messages (id, conversation_id, role, content, created_at)
@@ -1006,7 +1189,11 @@ def post_conversation_chat_stream(
                     round_index,
                     compact_log_text(tool_messages, 12000),
                 )
-                message = request_anthropic_with_tools(tool_messages)
+                message = request_anthropic_with_tools(
+                    tool_messages,
+                    user_profile_markdown,
+                    user_footprint_summary,
+                )
                 legacy.logger.info(
                     "tool-first model decision response | request_id=%s | conversation_id=%s | round=%s | response=%s",
                     request_id,
@@ -1153,6 +1340,15 @@ def post_conversation_chat_stream(
                     (assistant_text, legacy.now_ms(), assistant_message_id),
                 )
                 legacy.refresh_conversation_stats(connection, conversation_id)
+                try:
+                    legacy.maybe_auto_update_user_profile(connection)
+                except Exception as profile_error:
+                    legacy.logger.warning(
+                        "tool-first auto profile update failed | request_id=%s | conversation_id=%s | error=%s",
+                        request_id,
+                        conversation_id,
+                        profile_error,
+                    )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             legacy.logger.info(
                 "tool-first stream done | request_id=%s | conversation_id=%s | assistant_chars=%s | assistant_text=%s | elapsed_ms=%s",
@@ -1184,7 +1380,17 @@ def post_chat(body: legacy.ChatInput) -> dict[str, Any]:
         len(messages),
         compact_log_text(messages[-1].get("content", ""), 2000),
     )
-    reply = legacy.request_anthropic(legacy.AI_CHAT_SYSTEM_PROMPT, messages)
+    with legacy.get_db_connection() as connection:
+        user_profile_markdown = str(legacy.get_user_profile_row(connection)["profile_markdown"])
+        user_footprint_summary = legacy.build_user_footprint_summary(connection)
+    reply = legacy.request_anthropic(
+        legacy.build_user_memory_system_prompt(
+            legacy.AI_CHAT_SYSTEM_PROMPT,
+            user_profile_markdown,
+            user_footprint_summary,
+        ),
+        messages,
+    )
     legacy.logger.info(
         "tool-first chat reply | request_id=%s | reply=%s",
         request_id,

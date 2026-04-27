@@ -4,10 +4,17 @@ import { MapView } from '../components/MapView';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
-import { ArrowLeft, Calendar, TrendingUp, MapIcon, List } from 'lucide-react';
+import { ArrowLeft, Calendar, CheckCircle2, Footprints, TrendingUp, MapIcon, List } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
-import { getAllPlans } from '../data/plansStore';
+import {
+  getPlanById,
+  getPlanActivityNotes,
+  getPlanUserState,
+  markPlanCompleted,
+  savePlanActivityNote,
+  type PlanUserState
+} from '../data/plansStore';
 import { TravelChatPanel } from '../components/TravelChatPanel';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import type { TravelPlan } from '../data/mockPlans';
@@ -16,11 +23,30 @@ export function PlanDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeDay, setActiveDay] = useState(0);
-  const [plan, setPlan] = useState<TravelPlan | null>(() => getAllPlans().find(p => p.id === id) ?? null);
+  const [plan, setPlan] = useState<TravelPlan | null>(null);
+  const [isLoadingPlan, setIsLoadingPlan] = useState(true);
+  const [activityNotes, setActivityNotes] = useState<Record<string, string>>({});
+  const [planUserState, setPlanUserState] = useState<PlanUserState>({ status: 'planned' });
   
   useEffect(() => {
-    setPlan(getAllPlans().find(p => p.id === id) ?? null);
-    setActiveDay(0);
+    let isActive = true;
+    const loadPlan = async () => {
+      setIsLoadingPlan(true);
+      const nextPlan = id ? await getPlanById(id) : null;
+      const nextNotes = id ? await getPlanActivityNotes(id) : {};
+      const nextState = id ? await getPlanUserState(id) : { status: 'planned' as const };
+      if (!isActive) return;
+      setPlan(nextPlan);
+      setActivityNotes(nextNotes);
+      setPlanUserState(nextState);
+      setActiveDay(0);
+      setIsLoadingPlan(false);
+    };
+
+    void loadPlan();
+    return () => {
+      isActive = false;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -28,6 +54,14 @@ export function PlanDetailPage() {
     setActiveDay(plan.days.length > 0 ? plan.days.length - 1 : 0);
   }, [activeDay, plan]);
   
+  if (isLoadingPlan) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center text-muted-foreground">计划加载中...</div>
+      </div>
+    );
+  }
+
   if (!plan) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -42,6 +76,20 @@ export function PlanDetailPage() {
   // 获取所有活动用于地图显示
   const allActivities = plan.days.flatMap(day => day.activities);
   const currentDayActivities = plan.days[activeDay]?.activities || [];
+  const handleActivityNoteChange = (activityId: string, note: string) => {
+    if (!plan) return;
+    setActivityNotes((current) => ({
+      ...current,
+      [activityId]: note
+    }));
+    void savePlanActivityNote(plan.id, activityId, note).then(setActivityNotes);
+  };
+  const handleMarkCompleted = async () => {
+    if (!plan) return;
+    const result = await markPlanCompleted(plan);
+    setPlanUserState(result.planState);
+  };
+  const isCompleted = planUserState.status === 'completed';
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
@@ -88,17 +136,35 @@ export function PlanDetailPage() {
       {/* Info Bar */}
       <div className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex flex-wrap gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <Calendar className="size-4 text-blue-600" />
-              <span className="font-medium">时长：</span>
-              <span>{plan.duration}</span>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <Calendar className="size-4 text-blue-600" />
+                <span className="font-medium">时长：</span>
+                <span>{plan.duration}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="size-4 text-orange-600" />
+                <span className="font-medium">强度：</span>
+                <span>{plan.walkingIntensity}</span>
+              </div>
+              {isCompleted && (
+                <div className="flex items-center gap-2 text-amber-700">
+                  <Footprints className="size-4" />
+                  <span className="font-medium">已加入足迹</span>
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="size-4 text-orange-600" />
-              <span className="font-medium">强度：</span>
-              <span>{plan.walkingIntensity}</span>
-            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={isCompleted ? 'secondary' : 'default'}
+              onClick={handleMarkCompleted}
+              className="gap-2 self-start md:self-auto"
+            >
+              {isCompleted ? <CheckCircle2 className="size-4" /> : <Footprints className="size-4" />}
+              {isCompleted ? '已完成' : '标记已完成'}
+            </Button>
           </div>
         </div>
       </div>
@@ -132,7 +198,11 @@ export function PlanDetailPage() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.5, delay: index * 0.1 }}
                     >
-                      <DayItinerary day={day} />
+                      <DayItinerary
+                        day={day}
+                        activityNotes={activityNotes}
+                        onActivityNoteChange={handleActivityNoteChange}
+                      />
                     </motion.div>
                   ))}
                 </motion.div>

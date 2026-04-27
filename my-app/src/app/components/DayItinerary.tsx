@@ -5,9 +5,11 @@ import { Calendar } from 'lucide-react';
 
 interface DayItineraryProps {
   day: Day;
+  activityNotes?: Record<string, string>;
+  onActivityNoteChange?: (activityId: string, note: string) => void;
 }
 
-export function DayItinerary({ day }: DayItineraryProps) {
+export function DayItinerary({ day, activityNotes = {}, onActivityNoteChange }: DayItineraryProps) {
   return (
     <Card className="overflow-hidden">
       <CardHeader className="bg-gradient-to-r from-blue-50 to-purple-50">
@@ -26,7 +28,12 @@ export function DayItinerary({ day }: DayItineraryProps) {
       </CardHeader>
       <CardContent className="pt-6 space-y-3">
         {day.activities.map((activity) => (
-          <ActivityItem key={activity.id} activity={activity} />
+          <ActivityItem
+            key={activity.id}
+            activity={activity}
+            note={activityNotes[activity.id] || ''}
+            onNoteChange={(note) => onActivityNoteChange?.(activity.id, note)}
+          />
         ))}
       </CardContent>
     </Card>
